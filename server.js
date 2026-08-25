@@ -354,7 +354,7 @@ function toActualTransactions(rows) {
 /* ---------------- API routes ---------------- */
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, version: "3.1.0" });
+  res.json({ ok: true, version: "3.1.1" });
 });
 
 /* Profiles */
@@ -585,16 +585,44 @@ app.get("/api/actual/budgets", async (_req, res, next) => {
   try {
     const budgets = await withActualServer(api => api.getBudgets());
 
-    res.json(
-      budgets.map(budget => ({
+    // Actual may return both a cached/local copy and a remote/server copy
+    // of the same budget. Deduplicate by Sync ID (groupId), preferring the
+    // remote entry when both exist.
+    const bySyncId = new Map();
+
+    for (const budget of budgets) {
+      const syncId = budget.groupId || "";
+
+      // Budgets without a groupId cannot be safely selected for server sync.
+      if (!syncId) continue;
+
+      const normalized = {
         name: budget.name,
-        // In Actual's getBudgets() response, groupId matches the Sync ID
-        // shown in Advanced Settings.
-        syncId: budget.groupId || "",
+        syncId,
         cloudFileId: budget.cloudFileId || "",
         state: budget.state || "",
         encrypted: !!budget.encryptKeyId
-      }))
+      };
+
+      const existing = bySyncId.get(syncId);
+
+      if (!existing) {
+        bySyncId.set(syncId, normalized);
+        continue;
+      }
+
+      const existingIsRemote = existing.state === "remote";
+      const currentIsRemote = normalized.state === "remote";
+
+      if (currentIsRemote && !existingIsRemote) {
+        bySyncId.set(syncId, normalized);
+      }
+    }
+
+    res.json(
+      [...bySyncId.values()].sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || ""))
+      )
     );
   } catch (e) {
     next(e);
@@ -793,5 +821,5 @@ app.use((err, _req, res, _next) => {
 await ensureData();
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Actual Budget CSV Importer v3.1 on ${PORT}`);
+  console.log(`Actual Budget CSV Importer v3.1.1 on ${PORT}`);
 });

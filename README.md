@@ -1,4 +1,4 @@
-# Actual Budget CSV Importer 3.1
+# Actual Budget CSV Importer 3.1.1
 
 V3.1 fixes Actual Budget connection setup and adds automatic budget discovery.
 
@@ -88,3 +88,12 @@ Portainer exposes:
 ```text
 8080:3000
 ```
+
+
+## 3.1.1 patch
+
+Budget discovery now deduplicates local/cached and remote copies of the same Actual budget.
+
+Actual can return the same budget more than once from `getBudgets()`. The importer now groups entries by `groupId` / Sync ID and prefers the entry whose `state` is `remote`.
+
+As a result, a budget such as `My Finances` should now appear only once in the selection dropdown.
