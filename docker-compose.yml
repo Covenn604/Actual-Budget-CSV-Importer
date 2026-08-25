@@ -1,7 +1,7 @@
 services:
-  actual-csv-converter:
+  actual-budget-csv-importer:
     image: ghcr.io/covenn604/actual-budget-csv-importer:latest
-    container_name: actual-csv-converter
+    container_name: actual-budget-csv-importer
     ports:
       - "8080:3000"
     volumes:
