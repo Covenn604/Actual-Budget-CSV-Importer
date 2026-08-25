@@ -1,0 +1,9 @@
+services:
+  actual-csv-converter:
+    image: ghcr.io/covenn604/actual-csv-converter:latest
+    container_name: actual-csv-converter
+    ports:
+      - "8080:3000"
+    volumes:
+      - /mnt/array/appsdata/actual_csv_converter/data:/app/data
+    restart: unless-stopped
