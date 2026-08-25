@@ -1,6 +1,6 @@
 {
   "name": "actual-budget-csv-importer",
-  "version": "3.2.2",
+  "version": "3.3.0",
   "private": true,
   "type": "module",
   "scripts": {

@@ -12,7 +12,39 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const PROFILE_DIR = path.join(DATA_DIR, "profiles");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
-const ACTUAL_CACHE = path.join(DATA_DIR, "actual-cache");
+const ACTUAL_CACHE = process.env.ACTUAL_CACHE_DIR || "/tmp/actual-budget-csv-importer";
+const ACTUAL_CACHE_IDLE_MINUTES = Math.max(
+  1,
+  Number.parseInt(process.env.ACTUAL_CACHE_IDLE_MINUTES || "20", 10) || 20
+);
+const ACTUAL_CACHE_IDLE_MS = ACTUAL_CACHE_IDLE_MINUTES * 60 * 1000;
+let actualCacheLastUsedAt = 0;
+let actualCacheCleanupInProgress = false;
+
+function touchActualCache() {
+  actualCacheLastUsedAt = Date.now();
+}
+
+async function clearActualCache(reason = "idle timeout") {
+  if (actualCacheCleanupInProgress) return;
+  actualCacheCleanupInProgress = true;
+  try {
+    await fs.rm(ACTUAL_CACHE, { recursive: true, force: true });
+    actualCacheLastUsedAt = 0;
+    console.log(`[Actual cache] Cleared: ${reason}`);
+  } catch (error) {
+    console.error("[Actual cache] Cleanup failed:", error);
+  } finally {
+    actualCacheCleanupInProgress = false;
+  }
+}
+
+setInterval(async () => {
+  if (actualCacheLastUsedAt &&
+      Date.now() - actualCacheLastUsedAt >= ACTUAL_CACHE_IDLE_MS) {
+    await clearActualCache(`${ACTUAL_CACHE_IDLE_MINUTES} minute(s) idle`);
+  }
+}, 30 * 1000).unref();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }
@@ -290,13 +322,16 @@ async function initActualServer(config) {
 
 async function withActualServer(fn) {
   return serializedActual(async () => {
+    touchActualCache();
     const settings = await readSettings();
     const config = settings.actual || {};
 
     await initActualServer(config);
 
     try {
-      return await fn(actual, config, settings);
+      const result = await fn(actual, config, settings);
+      touchActualCache();
+      return result;
     } finally {
       try { await actual.shutdown(); } catch {}
     }
@@ -320,6 +355,7 @@ async function downloadSelectedBudget(config) {
 }
 
 async function withActualBudget(fn) {
+  touchActualCache();
   return serializedActual(async () => {
     const settings = await readSettings();
     const config = settings.actual || {};
@@ -601,7 +637,7 @@ async function analyzeDuplicates(api, accountId, rows, profile) {
 /* ---------------- API routes ---------------- */
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, version: "3.2.2" });
+  res.json({ ok: true, version: "3.3.0" });
 });
 
 /* Profiles */
@@ -1135,5 +1171,5 @@ app.use((err, _req, res, _next) => {
 await ensureData();
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Actual Budget CSV Importer v3.2.2 on ${PORT}`);
+  console.log(`Actual Budget CSV Importer v3.3 on ${PORT}`);
 });

@@ -17,5 +17,6 @@ services:
     environment:
       # Required only when your Actual server uses a private/self-signed CA.
       NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-/certs/actual-server.crt}
+      ACTUAL_CACHE_IDLE_MINUTES: ${ACTUAL_CACHE_IDLE_MINUTES:-20}
 
     restart: unless-stopped

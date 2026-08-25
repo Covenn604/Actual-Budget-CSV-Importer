@@ -431,7 +431,7 @@ For security:
 
 # Current version
 
-**3.2.2**
+**3.3.0**
 
 Changes in 3.2.2:
 
@@ -441,3 +441,49 @@ Changes in 3.2.2:
 - persisted budget now appears immediately after page reload
 - Actual setup automatically refreshes discovered budgets when opened
 - saved budget remains visible if discovery temporarily fails
+
+
+# Temporary Actual API cache
+
+Actual's API uses a local working copy of the selected budget. Because that working copy can contain financial data, version 3.3 no longer stores it in the persistent `/app/data` volume.
+
+The working copy now lives at:
+
+```text
+/tmp/actual-budget-csv-importer
+```
+
+Only configuration remains persistent:
+
+```text
+/app/data/profiles/
+/app/data/settings.json
+```
+
+## Configurable idle cleanup
+
+Set the cache inactivity timeout with:
+
+```env
+ACTUAL_CACHE_IDLE_MINUTES=20
+```
+
+The default is 20 minutes and the minimum is 1 minute. For a short personal import workflow, for example:
+
+```env
+ACTUAL_CACHE_IDLE_MINUTES=5
+```
+
+Actual-related activity resets the inactivity timer. After the configured idle period, the temporary Actual working directory is deleted. Because it is also outside the persistent Docker volume, recreating the container discards it as well.
+
+## Upgrading from 3.2.x
+
+Previous versions used `/app/data/actual-cache`. Version 3.3 no longer uses that directory. After upgrading and confirming the new version works, you may remove the old `actual-cache` directory from the importer's persistent host-data directory.
+
+## 3.3.0
+
+- Moved Actual's working copy from persistent storage to container `/tmp`
+- Added `ACTUAL_CACHE_IDLE_MINUTES`
+- Automatic cleanup after Actual API inactivity
+- Default timeout: 20 minutes
+- Container recreation also discards the working copy
