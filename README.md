@@ -1,4 +1,4 @@
-# Actual Budget CSV Importer 3.2
+# Actual Budget CSV Importer 3.2.1
 
 V3.1 fixes Actual Budget connection setup and adds automatic budget discovery.
 
@@ -117,3 +117,25 @@ Definite, likely, and possible duplicates are skipped by the importer. The analy
 Actual's own reconciliation/deduplication still runs on the safe subset.
 
 This is intentionally conservative. A legitimate repeated purchase that looks identical to an existing transaction may be classified as a likely/possible duplicate and skipped. The review table makes these decisions visible before import.
+
+
+## 3.2.1 — Per-profile Actual amount sign
+
+Profiles now include a separate **Direct Actual import sign** setting.
+
+This does not change the downloadable CSV. It only changes the amount used for:
+
+- duplicate analysis against the Actual account
+- Actual dry-run reconciliation
+- direct Actual API imports
+
+Available options:
+
+- Preserve converted amount
+- Invert amount
+- Force negative
+- Force positive
+
+For a credit card profile where the source CSV contains `60.00` but Actual stores the purchase internally as `-60.00`, choose **Invert amount**.
+
+Legacy profiles without this property default to `preserve`.

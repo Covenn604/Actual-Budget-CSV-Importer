@@ -335,11 +335,24 @@ async function withActualBudget(fn) {
   });
 }
 
-function toActualTransactions(rows) {
+function applyActualImportSign(amount, profile) {
+  let value = Number(amount);
+  const mode = profile?.actualImportSign || "preserve";
+
+  if (mode === "invert") value *= -1;
+  if (mode === "expenses-negative") value = -Math.abs(value);
+  if (mode === "expenses-positive") value = Math.abs(value);
+
+  return value;
+}
+
+function toActualTransactions(rows, profile) {
   return rows.map(row => {
+    const transformedAmount = applyActualImportSign(row.amount, profile);
+
     const transaction = {
       date: row.date,
-      amount: actual.utils.amountToInteger(Number(row.amount)),
+      amount: actual.utils.amountToInteger(transformedAmount),
       payee_name: row.description
     };
 
@@ -412,7 +425,7 @@ function summarizeExistingTransaction(transaction, payeeMap) {
   };
 }
 
-async function analyzeDuplicates(api, accountId, rows) {
+async function analyzeDuplicates(api, accountId, rows, profile) {
   if (!Array.isArray(rows) || !rows.length) {
     return {
       counts: {
@@ -465,7 +478,7 @@ async function analyzeDuplicates(api, accountId, rows) {
 
   for (let sourceIndex = 0; sourceIndex < rows.length; sourceIndex++) {
     const row = rows[sourceIndex];
-    const incomingAmount = actual.utils.amountToInteger(Number(row.amount));
+    const incomingAmount = actual.utils.amountToInteger(applyActualImportSign(row.amount, profile));
     const incomingPayee = normalizePayee(row.description);
 
     let classification = "new";
@@ -588,7 +601,7 @@ async function analyzeDuplicates(api, accountId, rows) {
 /* ---------------- API routes ---------------- */
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, version: "3.2.0" });
+  res.json({ ok: true, version: "3.2.1" });
 });
 
 /* Profiles */
@@ -966,9 +979,15 @@ app.post("/api/actual/dry-run", async (req, res, next) => {
       });
     }
 
+    const profilePath =
+      path.join(PROFILE_DIR, `${safeId(profileId)}.json`);
+
+    const profile =
+      JSON.parse(await fs.readFile(profilePath, "utf8"));
+
     const result = await withActualBudget(async api => {
       const duplicateAnalysis =
-        await analyzeDuplicates(api, accountId, rows);
+        await analyzeDuplicates(api, accountId, rows, profile);
 
       // Actual's own reconciliation is still shown for comparison, but
       // the app's safe import only submits rows independently classified
@@ -982,7 +1001,7 @@ app.post("/api/actual/dry-run", async (req, res, next) => {
       if (duplicateAnalysis.newRows.length) {
         const actualResult = await api.importTransactions(
           accountId,
-          toActualTransactions(duplicateAnalysis.newRows),
+          toActualTransactions(duplicateAnalysis.newRows, profile),
           {
             dryRun: true,
             reimportDeleted: false,
@@ -1050,9 +1069,15 @@ app.post("/api/actual/import", async (req, res, next) => {
 
     // Re-run duplicate analysis at import time. Never trust a stale
     // browser-side preflight to decide what is safe to send.
+    const profilePath =
+      path.join(PROFILE_DIR, `${safeId(profileId)}.json`);
+
+    const profile =
+      JSON.parse(await fs.readFile(profilePath, "utf8"));
+
     const result = await withActualBudget(async api => {
       const duplicateAnalysis =
-        await analyzeDuplicates(api, accountId, rows);
+        await analyzeDuplicates(api, accountId, rows, profile);
 
       const safeRows = duplicateAnalysis.newRows;
 
@@ -1065,7 +1090,7 @@ app.post("/api/actual/import", async (req, res, next) => {
 
       const importResult = await api.importTransactions(
         accountId,
-        toActualTransactions(safeRows),
+        toActualTransactions(safeRows, profile),
         {
           dryRun: false,
           reimportDeleted: false,
@@ -1110,5 +1135,5 @@ app.use((err, _req, res, _next) => {
 await ensureData();
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Actual Budget CSV Importer v3.2 on ${PORT}`);
+  console.log(`Actual Budget CSV Importer v3.2.1 on ${PORT}`);
 });

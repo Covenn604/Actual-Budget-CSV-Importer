@@ -155,10 +155,20 @@
       <label id="singleAmountWrap">Amount column<select id="mapAmount"></select></label>
 
       <label id="singleSignWrap">
-        Single amount sign
+        CSV conversion sign
         <select id="singleAmountSign">
           <option value="preserve">Preserve source signs</option>
           <option value="invert">Invert source signs</option>
+          <option value="expenses-negative">Force negative</option>
+          <option value="expenses-positive">Force positive</option>
+        </select>
+      </label>
+
+      <label>
+        Direct Actual import sign
+        <select id="actualImportSign">
+          <option value="preserve">Preserve converted amount</option>
+          <option value="invert">Invert amount</option>
           <option value="expenses-negative">Force negative</option>
           <option value="expenses-positive">Force positive</option>
         </select>
@@ -168,7 +178,7 @@
       <label class="dc hidden">Credit column<select id="mapCredit"></select></label>
     </div>
 
-    <div id="mapperPreview" class="tablewrap"></div>
+    <div class="notice">CSV conversion controls the downloadable CSV. Direct Actual import sign is applied only to duplicate analysis and API imports.</div><div id="mapperPreview" class="tablewrap"></div>
     <div id="mapperMessage"></div>
 
     <div class="dialog-actions">

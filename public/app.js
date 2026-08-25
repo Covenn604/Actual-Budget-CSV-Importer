@@ -446,6 +446,7 @@ function currentProfile(){
     dateFormat:$("dateFormat").value,
     amountMode:mode,
     singleAmountSign:$("singleAmountSign").value,
+    actualImportSign:$("actualImportSign").value,
     mapping:{
       date:$("mapDate").value,
       description:$("mapDescription").value
@@ -547,6 +548,7 @@ function renderProfiles(){
     <div class="profilecard">
       <h2>${esc(profile.name)}</h2>
       <p>${esc(profile.amountMode)} · ${esc(profile.dateFormat)}</p>
+      <p>Direct Actual sign: <strong>${esc(profile.actualImportSign || "preserve")}</strong></p>
 
       <div class="actions">
         <button class="secondary" onclick="exportProfile('${esc(profile.id)}')">
