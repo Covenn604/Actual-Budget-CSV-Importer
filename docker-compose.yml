@@ -1,12 +1,21 @@
 services:
   actual-budget-csv-importer:
-    image: ghcr.io/covenn604/actual-budget-csv-importer:latest
-    container_name: actual-budget-csv-importer
+    image: ${IMPORTER_IMAGE:-ghcr.io/covenn604/actual-budget-csv-importer:latest}
+    container_name: ${IMPORTER_CONTAINER_NAME:-actual-budget-csv-importer}
+
     ports:
-      - "8080:3000"
+      - "${IMPORTER_PORT:-8080}:3000"
+
     volumes:
-      - /mnt/array/appsdata/actual_csv_converter/data:/app/data
-      - /mnt/array/appsdata/actual_budget/server.crt:/certs/actual-server.crt:ro
+      # Persistent importer configuration, profiles, settings, and Actual API cache.
+      - ${IMPORTER_DATA_PATH:-./data}:/app/data
+
+      # Optional: trust a custom/self-signed certificate used by your Actual server.
+      # Set ACTUAL_CA_CERT_PATH in .env if needed.
+      - ${ACTUAL_CA_CERT_PATH:-./certs/actual-server.crt}:/certs/actual-server.crt:ro
+
     environment:
-      NODE_EXTRA_CA_CERTS: /certs/actual-server.crt
+      # Required only when your Actual server uses a private/self-signed CA.
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-/certs/actual-server.crt}
+
     restart: unless-stopped

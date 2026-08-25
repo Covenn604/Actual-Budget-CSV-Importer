@@ -19,6 +19,23 @@ async function loadActual(){
   S.actual=await api("/api/actual/settings");
   $("actualURL").value=S.actual.serverURL||"";
   $("syncId").value=S.actual.syncId||"";
+
+  // Show the previously selected budget immediately, even before a new
+  // discovery request. This makes persisted configuration visible after
+  // page reload/container restart.
+  if(S.actual.syncId){
+    const known=S.budgets.some(b=>b.syncId===S.actual.syncId);
+    if(!known){
+      S.budgets.unshift({
+        name:S.actual.budgetName||"Saved budget",
+        syncId:S.actual.syncId,
+        encrypted:S.actual.hasEncryptionPassword||false,
+        saved:true
+      });
+    }
+    renderBudgetSelect();
+  }
+
   renderMappings();
 }
 
@@ -34,8 +51,16 @@ document.querySelectorAll(".tab").forEach(button=>{
       $(tab+"Tab").classList.toggle("hidden",tab!==button.dataset.tab);
     });
 
-    if(button.dataset.tab==="actual" && S.actual.syncId){
-      await refreshAccounts(false);
+    if(button.dataset.tab==="actual"){
+      // If connection details were previously saved, refresh discovered
+      // budgets automatically. The saved selection is already visible even
+      // if this network refresh fails.
+      if(S.actual.serverURL && S.actual.hasPassword){
+        await discoverBudgets(false);
+      }
+      if(S.actual.syncId){
+        await refreshAccounts(false);
+      }
     }
   };
 });
@@ -628,30 +653,64 @@ $("saveActual").onclick=async()=>{
   }
 };
 
-$("discoverBudgets").onclick=async()=>{
+async function discoverBudgets(showMessage=true){
   try{
-    $("actualMessage").innerHTML=`
-      <div class="notice">Connecting to Actual and discovering budgets…</div>
-    `;
+    if(showMessage){
+      $("actualMessage").innerHTML=`
+        <div class="notice">Connecting to Actual and discovering budgets…</div>
+      `;
+    }
 
-    S.budgets=await api("/api/actual/budgets");
+    const discovered=await api("/api/actual/budgets");
+
+    // Server already deduplicates by Sync ID. Keep the current saved budget
+    // visible if for some reason it is not returned by discovery.
+    S.budgets=discovered;
+
+    if(S.actual.syncId && !S.budgets.some(b=>b.syncId===S.actual.syncId)){
+      S.budgets.unshift({
+        name:S.actual.budgetName||"Saved budget",
+        syncId:S.actual.syncId,
+        encrypted:S.actual.hasEncryptionPassword||false,
+        saved:true
+      });
+    }
 
     renderBudgetSelect();
 
-    $("actualMessage").innerHTML=`
-      <div class="notice good">
-        Connected. ${S.budgets.length} budget(s) found.
-      </div>
-    `;
+    if(showMessage){
+      $("actualMessage").innerHTML=`
+        <div class="notice good">
+          Connected. ${discovered.length} budget(s) found.
+        </div>
+      `;
+    }
+
+    return true;
   }catch(e){
-    S.budgets=[];
-    renderBudgetSelect();
+    // Do not erase the persisted budget just because discovery temporarily
+    // fails. Keep the last known selection visible.
+    if(S.actual.syncId){
+      S.budgets=[{
+        name:S.actual.budgetName||"Saved budget",
+        syncId:S.actual.syncId,
+        encrypted:S.actual.hasEncryptionPassword||false,
+        saved:true
+      }];
+      renderBudgetSelect();
+    }
 
-    $("actualMessage").innerHTML=`
-      <div class="notice bad">${esc(e.message)}</div>
-    `;
+    if(showMessage){
+      $("actualMessage").innerHTML=`
+        <div class="notice bad">${esc(e.message)}</div>
+      `;
+    }
+
+    return false;
   }
-};
+}
+
+$("discoverBudgets").onclick=()=>discoverBudgets(true);
 
 function renderBudgetSelect(){
   const selected=S.actual.syncId||"";

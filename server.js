@@ -601,7 +601,7 @@ async function analyzeDuplicates(api, accountId, rows, profile) {
 /* ---------------- API routes ---------------- */
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, version: "3.2.1" });
+  res.json({ ok: true, version: "3.2.2" });
 });
 
 /* Profiles */
@@ -1135,5 +1135,5 @@ app.use((err, _req, res, _next) => {
 await ensureData();
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Actual Budget CSV Importer v3.2.1 on ${PORT}`);
+  console.log(`Actual Budget CSV Importer v3.2.2 on ${PORT}`);
 });

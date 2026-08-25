@@ -1,141 +1,443 @@
-# Actual Budget CSV Importer 3.2.1
+# Actual Budget CSV Importer
 
-V3.1 fixes Actual Budget connection setup and adds automatic budget discovery.
+A self-hosted, profile-driven CSV converter and importer for [Actual Budget](https://actualbudget.org/).
 
-## Fixes
+The application is designed for banks and credit-card providers that export CSV files in different formats. Each user can create reusable mapping profiles in the browser, preview normalized transactions, download an Actual-compatible CSV, or optionally import directly into a self-hosted Actual Budget server.
 
-The Actual API expects the Sync ID positionally:
+## Features
 
-```js
-await api.downloadBudget(syncId);
-```
+- Drag-and-drop one or more CSV statements
+- One output/import per source account — files are never merged together
+- Create reusable CSV profiles from unknown formats
+- Automatic recognition of previously configured profiles
+- Date, description, amount, debit, and credit field mapping
+- Separate downloadable-CSV and direct-Actual amount-sign rules
+- Optional stable imported-ID mapping
+- Persistent JSON profile storage
+- Import/export profile JSON for sharing
+- Direct connection to self-hosted Actual Budget
+- Automatic Actual budget discovery
+- Persistent selected-budget and profile-to-account mappings
+- Duplicate-safety preflight before direct imports
+- Actual `importTransactions` dry-run before confirmation
+- Explicit confirmation before a real import
 
-For E2E-encrypted budgets:
-
-```js
-await api.downloadBudget(syncId, { password: encryptionPassword });
-```
-
-V3.1 uses this call shape directly.
-
-## Actual setup
-
-1. Enter the Actual server URL.
-2. Enter the server password.
-3. Save the connection.
-4. Click **Discover budgets**.
-5. Select a budget by name.
-6. Click **Use selected budget**.
-7. Click **Test selected budget**.
-8. Map each CSV profile to an Actual account.
-
-The importer obtains the Sync ID from `getBudgets()` using the returned `groupId`, which matches the Sync ID shown in Actual Advanced Settings.
-
-## Direct import safety
-
-Direct imports still follow:
-
-CSV → profile → normalize → preview → dry run → explicit confirmation → import
-
-Imports use Actual `importTransactions` with:
-
-- `dryRun: true` before a real import
-- `reimportDeleted: false`
-- `defaultCleared: true`
-- `payeeNameNormalization: "original"`
-
-If a bank CSV provides a stable transaction/reference ID, map it as **Imported ID** for stronger duplicate protection.
-
-## Persistent storage
+## How it works
 
 ```text
-/mnt/array/appsdata/actual_csv_converter/data:/app/data
+CSV statement
+      |
+      v
+Detect saved profile
+      |
+      +-- unknown --> Configure profile --> Save JSON profile
+      |
+      v
+Normalize transactions
+      |
+      v
+Preview
+   /     \
+  v       v
+Download  Duplicate safety analysis
+CSV             |
+                v
+          Actual dry run
+                |
+                v
+          Confirm safe import
 ```
 
-Contains:
+## Requirements
 
-- `profiles/*.json`
-- `settings.json`
-- `actual-cache/`
+For CSV conversion only:
 
-Exported profile JSON does not contain Actual credentials or account mappings.
+- Docker / Docker Compose, Portainer, or another container manager
+- A modern web browser
 
-## Custom HTTPS certificate
+For direct Actual imports:
 
-The included compose file trusts:
+- A self-hosted Actual Budget server reachable from the importer container
+- Actual server password
+- An Actual budget selected through the application's **Actual setup** screen
+- If Actual uses a self-signed/private certificate, the importer must trust that certificate
+
+---
+
+# Installation
+
+## Option 1 — Docker Compose
+
+Create a directory for the application:
+
+```bash
+mkdir actual-budget-csv-importer
+cd actual-budget-csv-importer
+```
+
+Copy these files from the repository into it:
 
 ```text
-/mnt/array/appsdata/actual_budget/server.crt
+docker-compose.yml
+.env.example
 ```
 
-through:
+Create your environment file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` for your system.
+
+A simple Linux example:
+
+```env
+IMPORTER_PORT=8080
+IMPORTER_DATA_PATH=/opt/actual-budget-csv-importer/data
+```
+
+A TrueNAS example might be:
+
+```env
+IMPORTER_PORT=8080
+IMPORTER_DATA_PATH=/mnt/tank/apps/actual-budget-csv-importer
+```
+
+Then deploy:
+
+```bash
+docker compose up -d
+```
+
+Open:
+
+```text
+http://YOUR-SERVER-IP:8080
+```
+
+## Option 2 — Portainer Stack
+
+In Portainer:
+
+1. Open **Stacks**.
+2. Select **Add stack**.
+3. Choose **Web editor** or **Git repository**.
+4. Use the repository's `docker-compose.yml`.
+5. Add stack environment variables matching the values described below.
+6. Deploy the stack.
+
+Recommended Portainer environment variables:
+
+```text
+IMPORTER_PORT=8080
+IMPORTER_DATA_PATH=/path/on/your/docker/host/actual-budget-csv-importer
+```
+
+If Actual uses a private/self-signed HTTPS certificate:
+
+```text
+ACTUAL_CA_CERT_PATH=/path/on/your/docker/host/server.crt
+NODE_EXTRA_CA_CERTS=/certs/actual-server.crt
+```
+
+The importer stores persistent application data under `/app/data` inside the container.
+
+---
+
+# Docker Compose configuration
+
+The supplied compose file is intentionally host-agnostic:
 
 ```yaml
-NODE_EXTRA_CA_CERTS: /certs/actual-server.crt
+services:
+  actual-budget-csv-importer:
+    image: ${IMPORTER_IMAGE:-ghcr.io/covenn604/actual-budget-csv-importer:latest}
+    container_name: ${IMPORTER_CONTAINER_NAME:-actual-budget-csv-importer}
+
+    ports:
+      - "${IMPORTER_PORT:-8080}:3000"
+
+    volumes:
+      - ${IMPORTER_DATA_PATH:-./data}:/app/data
+      - ${ACTUAL_CA_CERT_PATH:-./certs/actual-server.crt}:/certs/actual-server.crt:ro
+
+    environment:
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-/certs/actual-server.crt}
+
+    restart: unless-stopped
 ```
 
-## Deployment
+Nothing in the compose file is tied to a particular TrueNAS pool or host path.
 
-GitHub Actions publishes:
+## Persistent data
+
+The host path configured by `IMPORTER_DATA_PATH` contains:
+
+```text
+profiles/
+  my-bank.json
+  my-credit-card.json
+
+settings.json
+actual-cache/
+```
+
+`profiles/*.json` contains portable CSV mapping rules.
+
+`settings.json` contains private local configuration such as:
+
+- Actual server URL
+- Actual server password
+- selected budget
+- profile-to-Actual-account mappings
+
+Do not commit the persistent data directory to Git.
+
+---
+
+# HTTPS and self-signed certificates
+
+If your Actual server uses a certificate signed by a public CA, no special trust configuration may be necessary.
+
+If Actual uses a self-signed/private certificate, set:
+
+```env
+ACTUAL_CA_CERT_PATH=/host/path/to/server.crt
+NODE_EXTRA_CA_CERTS=/certs/actual-server.crt
+```
+
+The certificate should be valid for the hostname or IP address used in the Actual server URL.
+
+For example, if the importer connects to:
+
+```text
+https://192.168.1.10:5006
+```
+
+the certificate should include:
+
+```text
+subjectAltName = IP:192.168.1.10
+```
+
+Do not solve certificate problems by globally disabling TLS verification.
+
+---
+
+# First-run CSV profile setup
+
+A fresh installation intentionally contains no institution-specific profiles.
+
+Upload a CSV.
+
+If the format is unknown, click **Configure profile**.
+
+Configure:
+
+- Profile name
+- Date format
+- Date column
+- Description/payee column
+- Amount layout
+  - single amount column, or
+  - separate debit/credit columns
+- CSV conversion sign
+- Direct Actual import sign
+- Optional imported-ID column
+
+Test the mapping and save it.
+
+The profile is written to:
+
+```text
+/app/data/profiles/<profile-name>.json
+```
+
+Future CSVs containing the profile's required headers are recognized automatically.
+
+## Amount signs
+
+The application intentionally separates two concepts.
+
+### CSV conversion sign
+
+Controls the amount written to the downloadable CSV.
+
+### Direct Actual import sign
+
+Controls the amount sent through the Actual API and used for duplicate analysis.
+
+This is useful for credit cards where a source CSV may contain:
+
+```text
+60.00
+```
+
+but Actual internally stores the purchase as:
+
+```text
+-60.00
+```
+
+Choose **Invert amount** for the direct Actual import rule in that case.
+
+---
+
+# Connecting to Actual Budget
+
+Open **Actual setup**.
+
+## 1. Connect to Actual Server
+
+Enter:
+
+- Actual server URL
+- server password
+- encryption password only if the budget uses Actual E2E encryption
+
+Click **Save connection**.
+
+The password is saved only in the server-side persistent settings file and is never returned to the browser.
+
+## 2. Select a budget
+
+Click **Discover budgets** on first setup.
+
+The importer calls Actual's `getBudgets()` and displays budgets by name. Duplicate local/remote entries are deduplicated by Sync ID.
+
+Select a budget and click **Use selected budget**.
+
+The selected budget is persisted. On future page loads, the saved budget appears immediately in the dropdown; the application also refreshes budget discovery automatically when the Actual setup page is opened.
+
+You do not need to manually enter a Sync ID.
+
+## 3. Map profiles to Actual accounts
+
+Once a budget has been selected, the importer loads its accounts.
+
+Example:
+
+```text
+Bank CSV profile        -> Chequing
+Mastercard CSV profile  -> Credit Card
+```
+
+These mappings remain local and are not included in exported profile JSON.
+
+---
+
+# Duplicate safety
+
+Direct imports do not rely only on Actual's reconciliation result.
+
+Before importing, the application fetches existing transactions from the mapped account and classifies incoming rows.
+
+## Definite duplicate
+
+Same `imported_id` already exists.
+
+## Likely duplicate
+
+Same:
+
+- date
+- amount
+- normalized payee
+
+## Possible match
+
+Same amount and a similar payee within three days.
+
+## New
+
+No matching existing transaction was found.
+
+Safe mode sends only transactions classified as **New** to Actual.
+
+Definite, likely, and possible duplicates are skipped.
+
+The duplicate analysis is run again on the server immediately before the confirmed import so the browser cannot submit a stale safety result.
+
+Actual's own `importTransactions` reconciliation then runs on the safe subset.
+
+This approach is intentionally conservative. It is preferable to skip a questionable transaction for manual review than silently create a duplicate financial transaction.
+
+---
+
+# Imported IDs
+
+If your bank provides a stable transaction identifier such as:
+
+- transaction ID
+- reference number
+- FITID
+- unique ID
+
+map it to **Imported ID**.
+
+Actual provides its strongest duplicate protection when the same `imported_id` is supplied on subsequent imports.
+
+---
+
+# Updating
+
+If using the `latest` image:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+In Portainer, use **Pull latest image and redeploy**.
+
+Persistent profiles/settings survive container replacement because `/app/data` is mounted from the host.
+
+For more controlled deployments, use a versioned image tag instead of `latest`, for example:
+
+```text
+ghcr.io/covenn604/actual-budget-csv-importer:3.2.2
+```
+
+---
+
+# GitHub / GHCR
+
+The included GitHub Actions workflow builds the Docker image when changes are pushed to `main`.
+
+Images are published to:
 
 ```text
 ghcr.io/covenn604/actual-budget-csv-importer:latest
-ghcr.io/covenn604/actual-budget-csv-importer:3.1.0
+ghcr.io/covenn604/actual-budget-csv-importer:3.2.2
 ```
 
-Portainer exposes:
+---
 
-```text
-8080:3000
-```
+# Privacy
 
+Uploaded bank/credit-card CSV files are processed in memory and are not intentionally persisted by the application.
 
-## 3.1.1 patch
+Persistent storage contains configuration, mappings, and the Actual API local cache.
 
-Budget discovery now deduplicates local/cached and remote copies of the same Actual budget.
+For security:
 
-Actual can return the same budget more than once from `getBudgets()`. The importer now groups entries by `groupId` / Sync ID and prefers the entry whose `state` is `remote`.
+- keep the application LAN-only unless you add authentication/reverse-proxy protection
+- use HTTPS when exposing it beyond a trusted network
+- do not publish your persistent data directory
+- do not put bank statements into the Git repository
 
-As a result, a budget such as `My Finances` should now appear only once in the selection dropdown.
+---
 
+# Current version
 
-## 3.2 — Duplicate Safety
+**3.2.2**
 
-Direct import now performs an independent duplicate preflight against the mapped Actual account before any real import is allowed.
+Changes in 3.2.2:
 
-The importer fetches existing transactions for the source statement's date range plus a seven-day buffer and classifies every incoming row:
-
-- **Definite duplicate** — the same `imported_id` already exists.
-- **Likely duplicate** — same date, same amount, and same normalized payee.
-- **Possible match** — same amount with a similar payee within three days.
-- **New** — no existing match was found.
-
-Safe mode only sends **New** rows to Actual's `importTransactions`.
-
-Definite, likely, and possible duplicates are skipped by the importer. The analysis is re-run server-side immediately before a confirmed import, so a stale browser preview cannot bypass the safety check.
-
-Actual's own reconciliation/deduplication still runs on the safe subset.
-
-This is intentionally conservative. A legitimate repeated purchase that looks identical to an existing transaction may be classified as a likely/possible duplicate and skipped. The review table makes these decisions visible before import.
-
-
-## 3.2.1 — Per-profile Actual amount sign
-
-Profiles now include a separate **Direct Actual import sign** setting.
-
-This does not change the downloadable CSV. It only changes the amount used for:
-
-- duplicate analysis against the Actual account
-- Actual dry-run reconciliation
-- direct Actual API imports
-
-Available options:
-
-- Preserve converted amount
-- Invert amount
-- Force negative
-- Force positive
-
-For a credit card profile where the source CSV contains `60.00` but Actual stores the purchase internally as `-60.00`, choose **Invert amount**.
-
-Legacy profiles without this property default to `preserve`.
+- generalized Docker Compose paths using environment variables
+- added `.env.example`
+- comprehensive installation/Portainer documentation
+- persisted budget now appears immediately after page reload
+- Actual setup automatically refreshes discovered budgets when opened
+- saved budget remains visible if discovery temporarily fails
