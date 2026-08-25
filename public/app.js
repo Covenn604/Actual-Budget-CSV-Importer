@@ -1,29 +1,710 @@
-const S={profiles:[],jobs:[],config:null,actual:{},accounts:[]},$=x=>document.getElementById(x),esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-async function api(u,o={}){const r=await fetch(u,o),b=await r.json().catch(()=>({}));if(!r.ok)throw Error(b.error||`Request failed ${r.status}`);return b}
-async function loadProfiles(){S.profiles=await api("/api/profiles");renderProfiles();renderMappings()}async function loadActual(){S.actual=await api("/api/actual/settings");$("actualURL").value=S.actual.serverURL||"";$("syncId").value=S.actual.syncId||"";renderMappings()}loadProfiles();loadActual();
-document.querySelectorAll(".tab").forEach(b=>b.onclick=async()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));b.classList.add("active");["convert","profiles","actual"].forEach(t=>$(t+"Tab").classList.toggle("hidden",t!==b.dataset.tab));if(b.dataset.tab==="actual")await refreshAccounts(false)});
-const drop=$("drop"),files=$("files");drop.onclick=()=>files.click();files.onchange=e=>handle([...e.target.files]);["dragenter","dragover"].forEach(v=>drop.addEventListener(v,e=>{e.preventDefault();drop.classList.add("over")}));["dragleave","drop"].forEach(v=>drop.addEventListener(v,e=>{e.preventDefault();drop.classList.remove("over")}));drop.ondrop=e=>handle([...e.dataTransfer.files]);
-async function inspect(f){const d=new FormData();d.append("file",f);return api("/api/inspect",{method:"POST",body:d})}
-async function handle(list){for(const file of list.filter(f=>/\.csv$/i.test(f.name))){const j={file,status:"Inspecting",inspection:null,profile:null,result:null,error:null,dryRun:null,imported:null};S.jobs.push(j);renderJobs();try{j.inspection=await inspect(file);if(j.inspection.detectedProfile){j.profile=j.inspection.detectedProfile;await convertJob(j)}else j.status="Needs profile configuration"}catch(e){j.error=e.message}renderJobs()}}
-async function convertJob(j,p=j.profile){const d=new FormData();d.append("file",j.file);d.append("profile",JSON.stringify(p));d.append("headerIndex",j.inspection.headerIndex);j.result=await api("/api/convert",{method:"POST",body:d});j.profile=p;j.status=`Ready · ${j.result.rows.length} transactions`}
-function renderJobs(){$("jobs").innerHTML=S.jobs.map((j,i)=>`<div class="job"><div class="jobhead"><div><strong>${esc(j.file.name)}</strong><p>${esc(j.status)}</p>${j.profile?`<span class="pill">${esc(j.profile.name)}</span>`:""}</div><div class="${j.error?"bad":j.result?"good":"warn"}">${j.error?esc(j.error):j.imported?"Imported":j.result?"Converted":"Pending"}</div></div>${j.error?`<div class="notice bad">${esc(j.error)}</div>`:""}${!j.profile&&j.inspection?`<div class="notice">Unknown format. Configure it once and future matching files will be detected.</div><div class="actions"><button onclick="configure(${i})">Configure profile</button></div>`:""}${j.result?result(j,i):""}</div>`).join("")}
-function result(j,i){const mapped=S.actual.accountMappings?.[j.profile.id];return `${j.result.warnings.length?`<div class="notice warn">${j.result.warnings.map(esc).join("<br>")}</div>`:""}<div class="tablewrap"><table><thead><tr><th>Date</th><th>Amount</th><th>Description</th></tr></thead><tbody>${j.result.rows.slice(0,80).map(r=>`<tr><td>${esc(r.date)}</td><td class="amount">${Number(r.amount).toFixed(2)}</td><td>${esc(r.description)}</td></tr>`).join("")}</tbody></table></div><div class="actions"><button onclick="downloadJob(${i})">Download Actual CSV</button>${mapped?`<button class="secondary" onclick="dryRun(${i})">Preview Actual import</button>`:`<span class="notice">Map this profile to an Actual account to enable direct import.</span>`}</div>${j.dryRun?`<div class="notice good">Dry run: ${j.dryRun.added} add, ${j.dryRun.updated} update, ${j.dryRun.errors} error(s). ${j.dryRun.errors===0?`<button onclick="doImport(${i})">Confirm import</button>`:""}</div>`:""}${j.imported?`<div class="notice good">Import complete: ${j.imported.added} added, ${j.imported.updated} updated, ${j.imported.errors} error(s).</div>`:""}`}
-window.downloadJob=i=>{const j=S.jobs[i],q=s=>/[",\r\n]/.test(String(s))?`"${String(s).replace(/"/g,'""')}"`:s,l=["Transaction Date,Transaction Amount,Description"];j.result.rows.forEach(r=>l.push([r.date,Number(r.amount).toFixed(2),r.description].map(q).join(",")));const b=new Blob(["\uFEFF"+l.join("\r\n")+"\r\n"],{type:"text/csv"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`Actual_${j.profile.name.replace(/[^a-z0-9]+/gi,"_")}.csv`;a.click()};
-window.dryRun=async i=>{const j=S.jobs[i];try{const r=await api("/api/actual/dry-run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({profileId:j.profile.id,rows:j.result.rows})});j.dryRun=r.summary;j.error=null;renderJobs()}catch(e){j.error=e.message;renderJobs()}};
-window.doImport=async i=>{const j=S.jobs[i];if(!confirm(`Import ${j.result.rows.length} transactions into the mapped Actual account?`))return;try{const r=await api("/api/actual/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({profileId:j.profile.id,rows:j.result.rows,confirm:true})});j.imported=r.summary;j.dryRun=null;j.error=null;renderJobs()}catch(e){j.error=e.message;renderJobs()}};
-function fill(id,h,blank=false){$(id).innerHTML=(blank?'<option value="">— None —</option>':"")+h.map(x=>`<option>${esc(x)}</option>`).join("")}
-window.configure=i=>{const j=S.jobs[i];S.config=i;$("mapperFile").textContent=j.file.name;$("profileName").value="";["mapDate","mapDescription","mapAmount"].forEach(id=>fill(id,j.inspection.headers));["mapDebit","mapCredit","mapImportedId"].forEach(id=>fill(id,j.inspection.headers,true));guess(j.inspection.headers);$("mapperPreview").innerHTML=`<table><thead><tr>${j.inspection.headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${j.inspection.sampleRows.map(r=>`<tr>${j.inspection.headers.map((_,k)=>`<td>${esc(r[k]||"")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;$("mapperMessage").innerHTML="";$("mapper").showModal()};
-function guess(h){const l=h.map(x=>x.toLowerCase()),pick=(id,t)=>{const i=l.findIndex(x=>t.some(y=>x.includes(y)));if(i>=0)$(id).value=h[i]};pick("mapDate",["date"]);pick("mapDescription",["description","merchant","payee","memo"]);pick("mapAmount",["amount"]);pick("mapDebit",["debit","withdrawal"]);pick("mapCredit",["credit","deposit"]);pick("mapImportedId",["transaction id","reference","fitid","unique id"])}
-$("amountMode").onchange=()=>{const d=$("amountMode").value==="debit-credit";document.querySelectorAll(".dc").forEach(x=>x.classList.toggle("hidden",!d));$("singleAmountWrap").classList.toggle("hidden",d);$("singleSignWrap").classList.toggle("hidden",d)};
-function profile(){const mode=$("amountMode").value,p={name:$("profileName").value.trim(),delimiter:",",dateFormat:$("dateFormat").value,amountMode:mode,singleAmountSign:$("singleAmountSign").value,mapping:{date:$("mapDate").value,description:$("mapDescription").value},match:{requiredHeaders:[]}};if($("mapImportedId").value)p.mapping.importedId=$("mapImportedId").value;if(mode==="single"){p.mapping.amount=$("mapAmount").value;p.match.requiredHeaders=[p.mapping.date,p.mapping.description,p.mapping.amount]}else{p.mapping.debit=$("mapDebit").value;p.mapping.credit=$("mapCredit").value;p.match.requiredHeaders=[p.mapping.date,p.mapping.description,p.mapping.debit,p.mapping.credit].filter(Boolean)}if(p.mapping.importedId)p.match.requiredHeaders.push(p.mapping.importedId);return p}
-async function test(){const j=S.jobs[S.config],p=profile();if(!p.name)throw Error("Enter a profile name.");const d=new FormData();d.append("file",j.file);d.append("profile",JSON.stringify(p));d.append("headerIndex",j.inspection.headerIndex);return api("/api/convert",{method:"POST",body:d})}
-$("testMapping").onclick=async()=>{try{const r=await test();$("mapperMessage").innerHTML=`<div class="notice good">Mapping works: ${r.rows.length} transactions.</div>`}catch(e){$("mapperMessage").innerHTML=`<div class="notice bad">${esc(e.message)}</div>`}};
-$("saveProfile").onclick=async()=>{try{const j=S.jobs[S.config],p=profile(),r=await test(),saved=await api("/api/profiles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});j.profile=saved;j.result=r;j.status=`Ready · ${r.rows.length} transactions`;$("mapper").close();await loadProfiles();renderJobs()}catch(e){$("mapperMessage").innerHTML=`<div class="notice bad">${esc(e.message)}</div>`}};
-function renderProfiles(){$("profileList").innerHTML=S.profiles.map(p=>`<div class="profilecard"><h2>${esc(p.name)}</h2><p>${esc(p.amountMode)} · ${esc(p.dateFormat)}</p><div class="actions"><button class="secondary" onclick="exportProfile('${esc(p.id)}')">Export JSON</button><button class="secondary" onclick="deleteProfile('${esc(p.id)}','${esc(p.name)}')">Delete</button></div></div>`).join("")}
-window.exportProfile=id=>location.href=`/api/profiles/${encodeURIComponent(id)}/export`;window.deleteProfile=async(id,n)=>{if(confirm(`Delete "${n}"?`)){await api(`/api/profiles/${encodeURIComponent(id)}`,{method:"DELETE"});await loadProfiles();await loadActual()}};
-$("profileImport").onchange=async e=>{const f=e.target.files[0];if(!f)return;const d=new FormData();d.append("profile",f);try{await api("/api/profiles/import",{method:"POST",body:d});await loadProfiles()}catch(x){alert(x.message)}e.target.value=""};
-$("saveActual").onclick=async()=>{try{await api("/api/actual/settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({serverURL:$("actualURL").value,syncId:$("syncId").value,password:$("actualPassword").value,encryptionPassword:$("encryptionPassword").value})});$("actualPassword").value="";$("encryptionPassword").value="";await loadActual();$("actualMessage").innerHTML='<div class="notice good">Settings saved locally.</div>'}catch(e){$("actualMessage").innerHTML=`<div class="notice bad">${esc(e.message)}</div>`}};
-$("testActual").onclick=async()=>{try{$("actualMessage").innerHTML='<div class="notice">Connecting…</div>';const r=await api("/api/actual/test",{method:"POST"});$("actualMessage").innerHTML=`<div class="notice good">Connected. ${r.accounts} account(s) found.</div>`;await refreshAccounts()}catch(e){$("actualMessage").innerHTML=`<div class="notice bad">${esc(e.message)}</div>`}};
-async function refreshAccounts(show=false){try{S.accounts=await api("/api/actual/accounts");renderMappings()}catch(e){S.accounts=[];renderMappings();if(show)$("actualMessage").innerHTML=`<div class="notice bad">${esc(e.message)}</div>`}}
-function renderMappings(){if(!$("mappingList"))return;$("mappingList").innerHTML=S.profiles.length?S.profiles.map(p=>`<div class="maprow"><strong>${esc(p.name)}</strong><select onchange="saveMap('${esc(p.id)}',this.value)"><option value="">— Not mapped —</option>${S.accounts.filter(a=>!a.closed).map(a=>`<option value="${esc(a.id)}" ${S.actual.accountMappings?.[p.id]===a.id?"selected":""}>${esc(a.name)}${a.offbudget?" (off budget)":""}</option>`).join("")}</select></div>`).join(""):'<p>No profiles yet.</p>'}
-window.saveMap=async(id,accountId)=>{await api(`/api/actual/mappings/${encodeURIComponent(id)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({accountId})});await loadActual();renderJobs()};
+const S={profiles:[],jobs:[],config:null,actual:{},accounts:[],budgets:[]},
+$=x=>document.getElementById(x),
+esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(url,options={}){
+  const response=await fetch(url,options);
+  const body=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(body.error||`Request failed ${response.status}`);
+  return body;
+}
+
+async function loadProfiles(){
+  S.profiles=await api("/api/profiles");
+  renderProfiles();
+  renderMappings();
+}
+
+async function loadActual(){
+  S.actual=await api("/api/actual/settings");
+  $("actualURL").value=S.actual.serverURL||"";
+  $("syncId").value=S.actual.syncId||"";
+  renderMappings();
+}
+
+loadProfiles();
+loadActual();
+
+document.querySelectorAll(".tab").forEach(button=>{
+  button.onclick=async()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+    button.classList.add("active");
+
+    ["convert","profiles","actual"].forEach(tab=>{
+      $(tab+"Tab").classList.toggle("hidden",tab!==button.dataset.tab);
+    });
+
+    if(button.dataset.tab==="actual" && S.actual.syncId){
+      await refreshAccounts(false);
+    }
+  };
+});
+
+const drop=$("drop"),files=$("files");
+
+drop.onclick=()=>files.click();
+files.onchange=e=>handleFiles([...e.target.files]);
+
+["dragenter","dragover"].forEach(eventName=>{
+  drop.addEventListener(eventName,e=>{
+    e.preventDefault();
+    drop.classList.add("over");
+  });
+});
+
+["dragleave","drop"].forEach(eventName=>{
+  drop.addEventListener(eventName,e=>{
+    e.preventDefault();
+    drop.classList.remove("over");
+  });
+});
+
+drop.ondrop=e=>handleFiles([...e.dataTransfer.files]);
+
+async function inspect(file){
+  const data=new FormData();
+  data.append("file",file);
+  return api("/api/inspect",{method:"POST",body:data});
+}
+
+async function handleFiles(list){
+  for(const file of list.filter(f=>/\.csv$/i.test(f.name))){
+    const job={
+      file,
+      status:"Inspecting",
+      inspection:null,
+      profile:null,
+      result:null,
+      error:null,
+      dryRun:null,
+      imported:null
+    };
+
+    S.jobs.push(job);
+    renderJobs();
+
+    try{
+      job.inspection=await inspect(file);
+
+      if(job.inspection.detectedProfile){
+        job.profile=job.inspection.detectedProfile;
+        await convertJob(job);
+      }else{
+        job.status="Needs profile configuration";
+      }
+    }catch(e){
+      job.error=e.message;
+    }
+
+    renderJobs();
+  }
+}
+
+async function convertJob(job,profile=job.profile){
+  const data=new FormData();
+  data.append("file",job.file);
+  data.append("profile",JSON.stringify(profile));
+  data.append("headerIndex",job.inspection.headerIndex);
+
+  job.result=await api("/api/convert",{method:"POST",body:data});
+  job.profile=profile;
+  job.status=`Ready · ${job.result.rows.length} transactions`;
+}
+
+function renderJobs(){
+  $("jobs").innerHTML=S.jobs.map((job,index)=>`
+    <div class="job">
+      <div class="jobhead">
+        <div>
+          <strong>${esc(job.file.name)}</strong>
+          <p>${esc(job.status)}</p>
+          ${job.profile?`<span class="pill">${esc(job.profile.name)}</span>`:""}
+        </div>
+        <div class="${job.error?"bad":job.result?"good":"warn"}">
+          ${job.error?esc(job.error):job.imported?"Imported":job.result?"Converted":"Pending"}
+        </div>
+      </div>
+
+      ${job.error?`<div class="notice bad">${esc(job.error)}</div>`:""}
+
+      ${!job.profile&&job.inspection?`
+        <div class="notice">
+          Unknown format. Configure it once and future matching files will be detected.
+        </div>
+        <div class="actions">
+          <button onclick="configure(${index})">Configure profile</button>
+        </div>
+      `:""}
+
+      ${job.result?renderResult(job,index):""}
+    </div>
+  `).join("");
+}
+
+function renderResult(job,index){
+  const mapped=S.actual.accountMappings?.[job.profile.id];
+
+  return `
+    ${job.result.warnings.length?`
+      <div class="notice warn">${job.result.warnings.map(esc).join("<br>")}</div>
+    `:""}
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Date</th><th>Amount</th><th>Description</th></tr></thead>
+        <tbody>
+          ${job.result.rows.slice(0,80).map(row=>`
+            <tr>
+              <td>${esc(row.date)}</td>
+              <td class="amount">${Number(row.amount).toFixed(2)}</td>
+              <td>${esc(row.description)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="actions">
+      <button onclick="downloadJob(${index})">Download Actual CSV</button>
+
+      ${mapped
+        ? `<button class="secondary" onclick="dryRun(${index})">Preview Actual import</button>`
+        : `<span class="notice">Map this profile to an Actual account to enable direct import.</span>`
+      }
+    </div>
+
+    ${job.dryRun?`
+      <div class="notice good">
+        Dry run: ${job.dryRun.added} add, ${job.dryRun.updated} update,
+        ${job.dryRun.errors} error(s).
+        ${job.dryRun.errors===0
+          ? `<button onclick="doImport(${index})">Confirm import</button>`
+          : ""
+        }
+      </div>
+    `:""}
+
+    ${job.imported?`
+      <div class="notice good">
+        Import complete: ${job.imported.added} added,
+        ${job.imported.updated} updated,
+        ${job.imported.errors} error(s).
+      </div>
+    `:""}
+  `;
+}
+
+window.downloadJob=index=>{
+  const job=S.jobs[index];
+
+  const quote=value=>{
+    const s=String(value);
+    return /[",\r\n]/.test(s)
+      ? `"${s.replace(/"/g,'""')}"`
+      : s;
+  };
+
+  const lines=["Transaction Date,Transaction Amount,Description"];
+
+  job.result.rows.forEach(row=>{
+    lines.push(
+      [row.date,Number(row.amount).toFixed(2),row.description]
+        .map(quote)
+        .join(",")
+    );
+  });
+
+  const blob=new Blob(
+    ["\uFEFF"+lines.join("\r\n")+"\r\n"],
+    {type:"text/csv"}
+  );
+
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`Actual_${job.profile.name.replace(/[^a-z0-9]+/gi,"_")}.csv`;
+  a.click();
+};
+
+window.dryRun=async index=>{
+  const job=S.jobs[index];
+
+  try{
+    const response=await api("/api/actual/dry-run",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        profileId:job.profile.id,
+        rows:job.result.rows
+      })
+    });
+
+    job.dryRun=response.summary;
+    job.error=null;
+    renderJobs();
+  }catch(e){
+    job.error=e.message;
+    renderJobs();
+  }
+};
+
+window.doImport=async index=>{
+  const job=S.jobs[index];
+
+  if(!confirm(`Import ${job.result.rows.length} transactions into the mapped Actual account?`)){
+    return;
+  }
+
+  try{
+    const response=await api("/api/actual/import",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        profileId:job.profile.id,
+        rows:job.result.rows,
+        confirm:true
+      })
+    });
+
+    job.imported=response.summary;
+    job.dryRun=null;
+    job.error=null;
+    renderJobs();
+  }catch(e){
+    job.error=e.message;
+    renderJobs();
+  }
+};
+
+/* Profile mapper */
+
+function fillSelect(id,headers,blank=false){
+  $(id).innerHTML=
+    (blank?'<option value="">— None —</option>':"")+
+    headers.map(x=>`<option>${esc(x)}</option>`).join("");
+}
+
+window.configure=index=>{
+  const job=S.jobs[index];
+  S.config=index;
+
+  $("mapperFile").textContent=job.file.name;
+  $("profileName").value="";
+
+  ["mapDate","mapDescription","mapAmount"]
+    .forEach(id=>fillSelect(id,job.inspection.headers));
+
+  ["mapDebit","mapCredit","mapImportedId"]
+    .forEach(id=>fillSelect(id,job.inspection.headers,true));
+
+  guessMappings(job.inspection.headers);
+
+  $("mapperPreview").innerHTML=`
+    <table>
+      <thead>
+        <tr>${job.inspection.headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr>
+      </thead>
+      <tbody>
+        ${job.inspection.sampleRows.map(row=>`
+          <tr>
+            ${job.inspection.headers.map((_,i)=>`<td>${esc(row[i]||"")}</td>`).join("")}
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+
+  $("mapperMessage").innerHTML="";
+  $("mapper").showModal();
+};
+
+function guessMappings(headers){
+  const lower=headers.map(x=>x.toLowerCase());
+
+  const pick=(id,terms)=>{
+    const i=lower.findIndex(x=>terms.some(term=>x.includes(term)));
+    if(i>=0)$(id).value=headers[i];
+  };
+
+  pick("mapDate",["date"]);
+  pick("mapDescription",["description","merchant","payee","memo"]);
+  pick("mapAmount",["amount"]);
+  pick("mapDebit",["debit","withdrawal"]);
+  pick("mapCredit",["credit","deposit"]);
+  pick("mapImportedId",["transaction id","reference","fitid","unique id"]);
+}
+
+$("amountMode").onchange=()=>{
+  const debitCredit=$("amountMode").value==="debit-credit";
+
+  document.querySelectorAll(".dc")
+    .forEach(x=>x.classList.toggle("hidden",!debitCredit));
+
+  $("singleAmountWrap").classList.toggle("hidden",debitCredit);
+  $("singleSignWrap").classList.toggle("hidden",debitCredit);
+};
+
+function currentProfile(){
+  const mode=$("amountMode").value;
+
+  const profile={
+    name:$("profileName").value.trim(),
+    delimiter:",",
+    dateFormat:$("dateFormat").value,
+    amountMode:mode,
+    singleAmountSign:$("singleAmountSign").value,
+    mapping:{
+      date:$("mapDate").value,
+      description:$("mapDescription").value
+    },
+    match:{requiredHeaders:[]}
+  };
+
+  if($("mapImportedId").value){
+    profile.mapping.importedId=$("mapImportedId").value;
+  }
+
+  if(mode==="single"){
+    profile.mapping.amount=$("mapAmount").value;
+    profile.match.requiredHeaders=[
+      profile.mapping.date,
+      profile.mapping.description,
+      profile.mapping.amount
+    ];
+  }else{
+    profile.mapping.debit=$("mapDebit").value;
+    profile.mapping.credit=$("mapCredit").value;
+
+    profile.match.requiredHeaders=[
+      profile.mapping.date,
+      profile.mapping.description,
+      profile.mapping.debit,
+      profile.mapping.credit
+    ].filter(Boolean);
+  }
+
+  if(profile.mapping.importedId){
+    profile.match.requiredHeaders.push(profile.mapping.importedId);
+  }
+
+  return profile;
+}
+
+async function testCurrentProfile(){
+  const job=S.jobs[S.config];
+  const profile=currentProfile();
+
+  if(!profile.name){
+    throw Error("Enter a profile name.");
+  }
+
+  const data=new FormData();
+  data.append("file",job.file);
+  data.append("profile",JSON.stringify(profile));
+  data.append("headerIndex",job.inspection.headerIndex);
+
+  return api("/api/convert",{method:"POST",body:data});
+}
+
+$("testMapping").onclick=async()=>{
+  try{
+    const result=await testCurrentProfile();
+
+    $("mapperMessage").innerHTML=`
+      <div class="notice good">
+        Mapping works: ${result.rows.length} transactions.
+      </div>
+    `;
+  }catch(e){
+    $("mapperMessage").innerHTML=`
+      <div class="notice bad">${esc(e.message)}</div>
+    `;
+  }
+};
+
+$("saveProfile").onclick=async()=>{
+  try{
+    const job=S.jobs[S.config];
+    const profile=currentProfile();
+    const result=await testCurrentProfile();
+
+    const saved=await api("/api/profiles",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(profile)
+    });
+
+    job.profile=saved;
+    job.result=result;
+    job.status=`Ready · ${result.rows.length} transactions`;
+
+    $("mapper").close();
+
+    await loadProfiles();
+    renderJobs();
+  }catch(e){
+    $("mapperMessage").innerHTML=`
+      <div class="notice bad">${esc(e.message)}</div>
+    `;
+  }
+};
+
+function renderProfiles(){
+  $("profileList").innerHTML=S.profiles.map(profile=>`
+    <div class="profilecard">
+      <h2>${esc(profile.name)}</h2>
+      <p>${esc(profile.amountMode)} · ${esc(profile.dateFormat)}</p>
+
+      <div class="actions">
+        <button class="secondary" onclick="exportProfile('${esc(profile.id)}')">
+          Export JSON
+        </button>
+
+        <button class="secondary" onclick="deleteProfile('${esc(profile.id)}','${esc(profile.name)}')">
+          Delete
+        </button>
+      </div>
+    </div>
+  `).join("");
+}
+
+window.exportProfile=id=>{
+  location.href=`/api/profiles/${encodeURIComponent(id)}/export`;
+};
+
+window.deleteProfile=async(id,name)=>{
+  if(confirm(`Delete "${name}"?`)){
+    await api(`/api/profiles/${encodeURIComponent(id)}`,{
+      method:"DELETE"
+    });
+
+    await loadProfiles();
+    await loadActual();
+  }
+};
+
+$("profileImport").onchange=async event=>{
+  const file=event.target.files[0];
+  if(!file)return;
+
+  const data=new FormData();
+  data.append("profile",file);
+
+  try{
+    await api("/api/profiles/import",{
+      method:"POST",
+      body:data
+    });
+
+    await loadProfiles();
+  }catch(e){
+    alert(e.message);
+  }
+
+  event.target.value="";
+};
+
+/* Actual setup */
+
+$("saveActual").onclick=async()=>{
+  try{
+    await api("/api/actual/settings",{
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        serverURL:$("actualURL").value,
+        password:$("actualPassword").value,
+        encryptionPassword:$("encryptionPassword").value
+      })
+    });
+
+    $("actualPassword").value="";
+    $("encryptionPassword").value="";
+
+    await loadActual();
+
+    $("actualMessage").innerHTML=`
+      <div class="notice good">Connection settings saved locally.</div>
+    `;
+  }catch(e){
+    $("actualMessage").innerHTML=`
+      <div class="notice bad">${esc(e.message)}</div>
+    `;
+  }
+};
+
+$("discoverBudgets").onclick=async()=>{
+  try{
+    $("actualMessage").innerHTML=`
+      <div class="notice">Connecting to Actual and discovering budgets…</div>
+    `;
+
+    S.budgets=await api("/api/actual/budgets");
+
+    renderBudgetSelect();
+
+    $("actualMessage").innerHTML=`
+      <div class="notice good">
+        Connected. ${S.budgets.length} budget(s) found.
+      </div>
+    `;
+  }catch(e){
+    S.budgets=[];
+    renderBudgetSelect();
+
+    $("actualMessage").innerHTML=`
+      <div class="notice bad">${esc(e.message)}</div>
+    `;
+  }
+};
+
+function renderBudgetSelect(){
+  const selected=S.actual.syncId||"";
+
+  $("budgetSelect").innerHTML=
+    '<option value="">— Select a budget —</option>'+
+    S.budgets.map(budget=>`
+      <option
+        value="${esc(budget.syncId)}"
+        ${selected===budget.syncId?"selected":""}
+      >
+        ${esc(budget.name)}${budget.encrypted?" (encrypted)":""}
+      </option>
+    `).join("");
+
+  if(selected){
+    $("syncId").value=selected;
+  }
+}
+
+$("budgetSelect").onchange=()=>{
+  $("syncId").value=$("budgetSelect").value||"";
+};
+
+$("selectBudget").onclick=async()=>{
+  try{
+    const syncId=$("budgetSelect").value;
+
+    if(!syncId){
+      throw Error("Select a budget first.");
+    }
+
+    const budget=S.budgets.find(b=>b.syncId===syncId);
+
+    await api("/api/actual/select-budget",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        syncId,
+        budgetName:budget?.name||""
+      })
+    });
+
+    await loadActual();
+
+    $("budgetMessage").innerHTML=`
+      <div class="notice good">
+        Selected ${esc(budget?.name||"budget")}.
+      </div>
+    `;
+
+    await refreshAccounts(false);
+  }catch(e){
+    $("budgetMessage").innerHTML=`
+      <div class="notice bad">${esc(e.message)}</div>
+    `;
+  }
+};
+
+$("testActual").onclick=async()=>{
+  try{
+    $("budgetMessage").innerHTML=`
+      <div class="notice">
+        Downloading selected budget and loading accounts…
+      </div>
+    `;
+
+    const result=await api("/api/actual/test",{
+      method:"POST"
+    });
+
+    $("budgetMessage").innerHTML=`
+      <div class="notice good">
+        Connection successful. ${result.accounts} account(s) found.
+      </div>
+    `;
+
+    await refreshAccounts(false);
+  }catch(e){
+    $("budgetMessage").innerHTML=`
+      <div class="notice bad">${esc(e.message)}</div>
+    `;
+  }
+};
+
+async function refreshAccounts(showError=false){
+  try{
+    if(!S.actual.syncId){
+      S.accounts=[];
+      renderMappings();
+      return;
+    }
+
+    S.accounts=await api("/api/actual/accounts");
+    renderMappings();
+  }catch(e){
+    S.accounts=[];
+    renderMappings();
+
+    if(showError){
+      $("budgetMessage").innerHTML=`
+        <div class="notice bad">${esc(e.message)}</div>
+      `;
+    }
+  }
+}
+
+function renderMappings(){
+  if(!$("mappingList"))return;
+
+  if(!S.actual.syncId){
+    $("mappingList").innerHTML=`
+      <p>Select and test an Actual budget before mapping accounts.</p>
+    `;
+    return;
+  }
+
+  $("mappingList").innerHTML=S.profiles.length
+    ? S.profiles.map(profile=>`
+        <div class="maprow">
+          <strong>${esc(profile.name)}</strong>
+
+          <select onchange="saveMap('${esc(profile.id)}',this.value)">
+            <option value="">— Not mapped —</option>
+
+            ${S.accounts
+              .filter(account=>!account.closed)
+              .map(account=>`
+                <option
+                  value="${esc(account.id)}"
+                  ${S.actual.accountMappings?.[profile.id]===account.id?"selected":""}
+                >
+                  ${esc(account.name)}${account.offbudget?" (off budget)":""}
+                </option>
+              `).join("")
+            }
+          </select>
+        </div>
+      `).join("")
+    : "<p>No profiles yet.</p>";
+}
+
+window.saveMap=async(id,accountId)=>{
+  await api(`/api/actual/mappings/${encodeURIComponent(id)}`,{
+    method:"PUT",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({accountId})
+  });
+
+  await loadActual();
+  renderJobs();
+};

@@ -6,4 +6,7 @@ services:
       - "8080:3000"
     volumes:
       - /mnt/array/appsdata/actual_csv_converter/data:/app/data
+      - /mnt/array/appsdata/actual_budget/server.crt:/certs/actual-server.crt:ro
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/actual-server.crt
     restart: unless-stopped

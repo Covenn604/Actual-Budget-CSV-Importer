@@ -1,47 +1,90 @@
-# Actual Budget CSV Importer 3.0
+# Actual Budget CSV Importer 3.1
 
-Adds optional direct import into self-hosted Actual Budget while keeping CSV download support.
+V3.1 fixes Actual Budget connection setup and adds automatic budget discovery.
 
-## New
-- Actual server URL / Sync ID / password setup
-- Account discovery
-- Local profile-to-Actual-account mapping
-- Mapping is excluded from exported profile JSON
-- Optional Imported ID source column
-- Actual `importTransactions` dry run
-- Explicit confirmation before real import
+## Fixes
+
+The Actual API expects the Sync ID positionally:
+
+```js
+await api.downloadBudget(syncId);
+```
+
+For E2E-encrypted budgets:
+
+```js
+await api.downloadBudget(syncId, { password: encryptionPassword });
+```
+
+V3.1 uses this call shape directly.
+
+## Actual setup
+
+1. Enter the Actual server URL.
+2. Enter the server password.
+3. Save the connection.
+4. Click **Discover budgets**.
+5. Select a budget by name.
+6. Click **Use selected budget**.
+7. Click **Test selected budget**.
+8. Map each CSV profile to an Actual account.
+
+The importer obtains the Sync ID from `getBudgets()` using the returned `groupId`, which matches the Sync ID shown in Actual Advanced Settings.
+
+## Direct import safety
+
+Direct imports still follow:
+
+CSV → profile → normalize → preview → dry run → explicit confirmation → import
+
+Imports use Actual `importTransactions` with:
+
+- `dryRun: true` before a real import
 - `reimportDeleted: false`
-- Persistent Actual API cache
+- `defaultCleared: true`
+- `payeeNameNormalization: "original"`
 
-## Persistent data
-`/mnt/array/appsdata/actual_csv_converter/data:/app/data`
+If a bank CSV provides a stable transaction/reference ID, map it as **Imported ID** for stronger duplicate protection.
+
+## Persistent storage
+
+```text
+/mnt/array/appsdata/actual_csv_converter/data:/app/data
+```
 
 Contains:
+
 - `profiles/*.json`
-- `settings.json` (private Actual connection + account mappings)
+- `settings.json`
 - `actual-cache/`
 
-Do not commit this data directory.
+Exported profile JSON does not contain Actual credentials or account mappings.
 
-## Actual connection
-Get your budget Sync ID from Actual Settings → Advanced / Show advanced settings.
+## Custom HTTPS certificate
 
-Then open **Actual setup**:
-1. Enter Actual server URL.
-2. Enter Sync ID.
-3. Enter server password.
-4. Enter encryption password only if your budget uses E2E encryption.
-5. Save and test.
-6. Map each CSV profile to an Actual account.
+The included compose file trusts:
 
-## Import safety
-A direct import always starts with Actual's dry-run reconciliation. The real import is a separate confirmed action.
+```text
+/mnt/array/appsdata/actual_budget/server.crt
+```
 
-If a bank CSV exposes a stable reference/transaction ID, map it as **Imported ID**. This gives Actual the strongest duplicate protection.
+through:
+
+```yaml
+NODE_EXTRA_CA_CERTS: /certs/actual-server.crt
+```
 
 ## Deployment
-GitHub Actions publishes:
-`ghcr.io/covenn604/actual-budget-csv-importer:latest`
 
-Portainer mapping:
-`8080:3000`
+GitHub Actions publishes:
+
+```text
+ghcr.io/covenn604/actual-budget-csv-importer:latest
+ghcr.io/covenn604/actual-budget-csv-importer:3.1.0
+```
+
+Portainer exposes:
+
+```text
+8080:3000
+```
