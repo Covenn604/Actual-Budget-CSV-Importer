@@ -1,137 +1,47 @@
-# Actual Budget CSV Importer 2.1
+# Actual Budget CSV Importer 3.0
 
-A self-hosted, profile-driven CSV converter for Actual Budget.
+Adds optional direct import into self-hosted Actual Budget while keeping CSV download support.
 
-## Profile-first design
+## New
+- Actual server URL / Sync ID / password setup
+- Account discovery
+- Local profile-to-Actual-account mapping
+- Mapping is excluded from exported profile JSON
+- Optional Imported ID source column
+- Actual `importTransactions` dry run
+- Explicit confirmation before real import
+- `reimportDeleted: false`
+- Persistent Actual API cache
 
-Version 2.1 intentionally ships with **no built-in CSV profiles**.
+## Persistent data
+`/mnt/array/appsdata/actual_csv_converter/data:/app/data`
 
-On a fresh installation:
+Contains:
+- `profiles/*.json`
+- `settings.json` (private Actual connection + account mappings)
+- `actual-cache/`
 
-1. Upload a CSV statement.
-2. The app reports that the format is unknown.
-3. Click **Configure profile**.
-4. Map the source fields.
-5. Test the mapping.
-6. Save the profile.
-7. Download the Actual-compatible CSV.
+Do not commit this data directory.
 
-That saved profile is then reused automatically for future files with the same identifying headers.
+## Actual connection
+Get your budget Sync ID from Actual Settings → Advanced / Show advanced settings.
 
-This means every bank or card format is configured through the same user-facing workflow. There are no institution-specific mappings baked into the application.
+Then open **Actual setup**:
+1. Enter Actual server URL.
+2. Enter Sync ID.
+3. Enter server password.
+4. Enter encryption password only if your budget uses E2E encryption.
+5. Save and test.
+6. Map each CSV profile to an Actual account.
 
-## Persistent profile storage
+## Import safety
+A direct import always starts with Actual's dry-run reconciliation. The real import is a separate confirmed action.
 
-Profiles are stored as JSON files in:
+If a bank CSV exposes a stable reference/transaction ID, map it as **Imported ID**. This gives Actual the strongest duplicate protection.
 
-    /app/data/profiles
-
-With the included TrueNAS/Portainer compose file, that maps to:
-
-    /mnt/array/appsdata/actual_csv_converter/data/profiles
-
-They survive Docker image updates and container recreation.
-
-A typical installation may eventually look like:
-
-    /mnt/array/appsdata/actual_csv_converter/data/
-      profiles/
-        my-bank.json
-        my-mastercard.json
-        another-card.json
-
-## Current mapping features
-
-- Date column
-- Description column
-- Common source date formats
-- Single amount column
-- Separate debit and credit columns
-- Preserve/invert/force amount signs
-- Mapping test before saving
-- Profile export to JSON
-- Profile import from JSON
-- Automatic recognition of previously configured formats
-- Separate converted CSV output for each uploaded source file
-
-## Sharing
-
-The application can be shared without any bank-specific configuration.
-
-Individual users create their own profiles. If they want to share a profile for a particular institution, they can export its JSON file separately.
-
-Profiles contain mapping rules, not transaction history.
-
-## Privacy
-
-Uploaded CSV files are processed in memory by the self-hosted application and are not written to persistent storage.
-
-Only profile configuration JSON is persisted.
-
-## TrueNAS / Portainer
-
-The compose file uses:
-
-    ghcr.io/covenn604/actual-budget-csv-importer:latest
-
-Port mapping:
-
-    8080:3000
-
-Persistent data:
-
-    /mnt/array/appsdata/actual_csv_converter/data:/app/data
-
-After pushing this version to GitHub, allow GitHub Actions to build the new image and then pull/redeploy the stack in Portainer.
-
-## Future Actual Budget integration
-
-The intended next stage uses Actual Budget's official Node API.
-
-The target workflow is:
-
-    CSV
-      ↓
-    detect/create profile
-      ↓
-    normalize
-      ↓
-    preview
-      ↓
-    choose Actual account
-      ↓
-    dry run / duplicate check
-      ↓
-    confirm
-      ↓
-    import
-
-Shareable CSV profiles should remain separate from private local Actual server credentials and account associations.
-
-
-## Repository layout
-
-The expected repository structure is:
-
-    Actual-Budget-CSV-Importer/
-    ├── .github/
-    │   └── workflows/
-    │       └── docker-publish.yml
-    ├── public/
-    │   ├── app.js
-    │   ├── index.html
-    │   └── styles.css
-    ├── .gitignore
-    ├── Dockerfile
-    ├── docker-compose.yml
-    ├── package.json
-    ├── README.md
-    └── server.js
-
+## Deployment
 GitHub Actions publishes:
+`ghcr.io/covenn604/actual-budget-csv-importer:latest`
 
-    ghcr.io/covenn604/actual-budget-csv-importer:latest
-
-The TrueNAS persistent-data mount remains:
-
-    /mnt/array/appsdata/actual_csv_converter/data:/app/data
+Portainer mapping:
+`8080:3000`

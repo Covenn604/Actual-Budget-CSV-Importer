@@ -1,14 +1,14 @@
 {
   "name": "actual-budget-csv-importer",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@actual-app/api": "26.8.1",
     "express": "^5.1.0",
     "multer": "^2.0.2"
-  },
-  "description": "Self-hosted, profile-driven CSV importer/converter for Actual Budget"
+  }
 }
