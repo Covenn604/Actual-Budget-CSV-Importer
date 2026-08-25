@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
 env:
-  IMAGE_NAME: covenn604/actual-csv-converter
+  IMAGE_NAME: covenn604/actual-budget-csv-importer
 jobs:
   build-and-push:
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 services:
   actual-csv-converter:
-    image: ghcr.io/covenn604/actual-csv-converter:latest
+    image: ghcr.io/covenn604/actual-budget-csv-importer:latest
     container_name: actual-csv-converter
     ports:
       - "8080:3000"

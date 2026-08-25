@@ -87,4 +87,4 @@ app.post("/api/inspect",upload.single("file"),async(q,r,n)=>{try{
 app.post("/api/convert",upload.single("file"),async(q,r,n)=>{try{const p=JSON.parse(q.body.profile),rows=parse(decode(q.file.buffer),p.delimiter||",");r.json(convert(rows,p,Number(q.body.headerIndex)))}catch(e){n(e)}});
 app.get("/api/actual/status",(_q,r)=>r.json({available:false,stage:"planned",message:"Direct import will use @actual-app/api and importTransactions in a future release."}));
 app.use((e,_q,r,_n)=>{console.error(e);r.status(500).json({error:e.message||"Internal server error"})});
-await ensureData(); app.listen(PORT,"0.0.0.0",()=>console.log(`Actual CSV Converter v2.1 on ${PORT}`));
+await ensureData(); app.listen(PORT,"0.0.0.0",()=>console.log(`Actual Budget CSV Importer v2.1 on ${PORT}`));

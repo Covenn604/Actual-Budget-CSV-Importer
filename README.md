@@ -1,4 +1,4 @@
-# Actual CSV Converter 2.1
+# Actual Budget CSV Importer 2.1
 
 A self-hosted, profile-driven CSV converter for Actual Budget.
 
@@ -72,7 +72,7 @@ Only profile configuration JSON is persisted.
 
 The compose file uses:
 
-    ghcr.io/covenn604/actual-csv-converter:latest
+    ghcr.io/covenn604/actual-budget-csv-importer:latest
 
 Port mapping:
 
@@ -107,3 +107,31 @@ The target workflow is:
     import
 
 Shareable CSV profiles should remain separate from private local Actual server credentials and account associations.
+
+
+## Repository layout
+
+The expected repository structure is:
+
+    Actual-Budget-CSV-Importer/
+    ├── .github/
+    │   └── workflows/
+    │       └── docker-publish.yml
+    ├── public/
+    │   ├── app.js
+    │   ├── index.html
+    │   └── styles.css
+    ├── .gitignore
+    ├── Dockerfile
+    ├── docker-compose.yml
+    ├── package.json
+    ├── README.md
+    └── server.js
+
+GitHub Actions publishes:
+
+    ghcr.io/covenn604/actual-budget-csv-importer:latest
+
+The TrueNAS persistent-data mount remains:
+
+    /mnt/array/appsdata/actual_csv_converter/data:/app/data

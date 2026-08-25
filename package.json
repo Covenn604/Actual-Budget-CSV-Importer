@@ -1,5 +1,5 @@
 {
-  "name": "actual-csv-converter",
+  "name": "actual-budget-csv-importer",
   "version": "2.1.0",
   "private": true,
   "type": "module",
@@ -9,5 +9,6 @@
   "dependencies": {
     "express": "^5.1.0",
     "multer": "^2.0.2"
-  }
+  },
+  "description": "Self-hosted, profile-driven CSV importer/converter for Actual Budget"
 }
