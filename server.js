@@ -351,10 +351,244 @@ function toActualTransactions(rows) {
   });
 }
 
+
+/* ---------------- Duplicate safety ---------------- */
+
+function normalizePayee(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&amp;/g, "&")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenSimilarity(a, b) {
+  const aa = new Set(normalizePayee(a).split(" ").filter(Boolean));
+  const bb = new Set(normalizePayee(b).split(" ").filter(Boolean));
+
+  if (!aa.size || !bb.size) return 0;
+
+  let intersection = 0;
+  for (const token of aa) {
+    if (bb.has(token)) intersection++;
+  }
+
+  const union = new Set([...aa, ...bb]).size;
+  return union ? intersection / union : 0;
+}
+
+function addDays(dateString, days) {
+  const date = new Date(`${dateString}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function dayDistance(a, b) {
+  const aa = new Date(`${a}T12:00:00Z`);
+  const bb = new Date(`${b}T12:00:00Z`);
+  return Math.abs(Math.round((aa - bb) / 86400000));
+}
+
+function getExistingPayeeName(transaction, payeeMap) {
+  if (transaction.imported_payee) return transaction.imported_payee;
+
+  const payeeId =
+    transaction.payee_id ||
+    transaction.payee ||
+    transaction.payeeId ||
+    "";
+
+  return payeeMap.get(payeeId) || "";
+}
+
+function summarizeExistingTransaction(transaction, payeeMap) {
+  return {
+    id: transaction.id,
+    date: transaction.date,
+    amount: transaction.amount,
+    importedId: transaction.imported_id || "",
+    payee: getExistingPayeeName(transaction, payeeMap)
+  };
+}
+
+async function analyzeDuplicates(api, accountId, rows) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return {
+      counts: {
+        definiteDuplicate: 0,
+        likelyDuplicate: 0,
+        possibleDuplicate: 0,
+        new: 0
+      },
+      rows: [],
+      newRows: []
+    };
+  }
+
+  const dates = rows
+    .map(row => row.date)
+    .filter(Boolean)
+    .sort();
+
+  const start = addDays(dates[0], -7);
+  const end = addDays(dates[dates.length - 1], 7);
+
+  const [existingTransactions, payees] = await Promise.all([
+    api.getTransactions(accountId, start, end),
+    api.getPayees()
+  ]);
+
+  const payeeMap = new Map(
+    (payees || []).map(payee => [payee.id, payee.name || ""])
+  );
+
+  // Avoid counting split-parent and split-child representations twice.
+  const existing = (existingTransactions || [])
+    .filter(tx => tx && tx.is_parent !== true)
+    .map(tx => summarizeExistingTransaction(tx, payeeMap));
+
+  const byImportedId = new Map();
+  for (const tx of existing) {
+    if (tx.importedId) {
+      if (!byImportedId.has(tx.importedId)) {
+        byImportedId.set(tx.importedId, []);
+      }
+      byImportedId.get(tx.importedId).push(tx);
+    }
+  }
+
+  // Heuristic matches consume an existing transaction so one existing row
+  // cannot make several identical incoming rows all look like duplicates.
+  const consumedExistingIds = new Set();
+  const analysisRows = [];
+
+  for (let sourceIndex = 0; sourceIndex < rows.length; sourceIndex++) {
+    const row = rows[sourceIndex];
+    const incomingAmount = actual.utils.amountToInteger(Number(row.amount));
+    const incomingPayee = normalizePayee(row.description);
+
+    let classification = "new";
+    let reason = "No existing transaction matched.";
+    let matched = null;
+    let confidence = "new";
+
+    // Strongest duplicate guarantee: bank-provided imported ID.
+    if (row.importedId && byImportedId.has(row.importedId)) {
+      matched = byImportedId.get(row.importedId)[0];
+      classification = "definiteDuplicate";
+      confidence = "definite";
+      reason = "Same imported ID already exists in Actual.";
+    }
+
+    if (!matched) {
+      const exactCandidates = existing.filter(tx =>
+        !consumedExistingIds.has(tx.id) &&
+        tx.amount === incomingAmount &&
+        tx.date === row.date &&
+        normalizePayee(tx.payee) === incomingPayee &&
+        incomingPayee
+      );
+
+      if (exactCandidates.length) {
+        matched = exactCandidates[0];
+        consumedExistingIds.add(matched.id);
+        classification = "likelyDuplicate";
+        confidence = "high";
+        reason = "Same date, amount, and normalized payee already exist.";
+      }
+    }
+
+    if (!matched) {
+      const possibleCandidates = existing
+        .filter(tx =>
+          !consumedExistingIds.has(tx.id) &&
+          tx.amount === incomingAmount &&
+          dayDistance(tx.date, row.date) <= 3
+        )
+        .map(tx => ({
+          tx,
+          similarity: tokenSimilarity(tx.payee, row.description),
+          days: dayDistance(tx.date, row.date)
+        }))
+        .filter(candidate =>
+          candidate.similarity >= 0.60 ||
+          (
+            normalizePayee(candidate.tx.payee) &&
+            (
+              normalizePayee(candidate.tx.payee).includes(incomingPayee) ||
+              incomingPayee.includes(normalizePayee(candidate.tx.payee))
+            )
+          )
+        )
+        .sort((a, b) =>
+          b.similarity - a.similarity ||
+          a.days - b.days
+        );
+
+      if (possibleCandidates.length) {
+        const best = possibleCandidates[0];
+        matched = best.tx;
+        consumedExistingIds.add(matched.id);
+        classification = "possibleDuplicate";
+        confidence = "medium";
+        reason =
+          `Same amount with a similar payee within ${best.days} day(s).`;
+      }
+    }
+
+    analysisRows.push({
+      sourceIndex,
+      classification,
+      confidence,
+      reason,
+      incoming: {
+        date: row.date,
+        amount: row.amount,
+        description: row.description,
+        importedId: row.importedId || ""
+      },
+      existing: matched
+        ? {
+            id: matched.id,
+            date: matched.date,
+            amount: actual.utils.integerToAmount
+              ? actual.utils.integerToAmount(matched.amount)
+              : matched.amount / 100,
+            payee: matched.payee,
+            importedId: matched.importedId || ""
+          }
+        : null
+    });
+  }
+
+  const counts = {
+    definiteDuplicate: analysisRows.filter(x => x.classification === "definiteDuplicate").length,
+    likelyDuplicate: analysisRows.filter(x => x.classification === "likelyDuplicate").length,
+    possibleDuplicate: analysisRows.filter(x => x.classification === "possibleDuplicate").length,
+    new: analysisRows.filter(x => x.classification === "new").length
+  };
+
+  const newIndexes = new Set(
+    analysisRows
+      .filter(x => x.classification === "new")
+      .map(x => x.sourceIndex)
+  );
+
+  return {
+    counts,
+    rows: analysisRows,
+    newRows: rows.filter((_row, index) => newIndexes.has(index)),
+    dateRange: { start, end },
+    existingTransactionCount: existing.length
+  };
+}
+
+
 /* ---------------- API routes ---------------- */
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, version: "3.1.1" });
+  res.json({ ok: true, version: "3.2.0" });
 });
 
 /* Profiles */
@@ -732,26 +966,56 @@ app.post("/api/actual/dry-run", async (req, res, next) => {
       });
     }
 
-    const result = await withActualBudget(api =>
-      api.importTransactions(
-        accountId,
-        toActualTransactions(rows),
-        {
-          dryRun: true,
-          reimportDeleted: false,
-          defaultCleared: true,
-          payeeNameNormalization: "original"
-        }
-      )
-    );
+    const result = await withActualBudget(async api => {
+      const duplicateAnalysis =
+        await analyzeDuplicates(api, accountId, rows);
+
+      // Actual's own reconciliation is still shown for comparison, but
+      // the app's safe import only submits rows independently classified
+      // as new.
+      let actualDryRun = {
+        added: 0,
+        updated: 0,
+        errors: 0
+      };
+
+      if (duplicateAnalysis.newRows.length) {
+        const actualResult = await api.importTransactions(
+          accountId,
+          toActualTransactions(duplicateAnalysis.newRows),
+          {
+            dryRun: true,
+            reimportDeleted: false,
+            defaultCleared: true,
+            payeeNameNormalization: "original"
+          }
+        );
+
+        actualDryRun = {
+          added: actualResult.added?.length || 0,
+          updated: actualResult.updated?.length || 0,
+          errors: actualResult.errors?.length || 0
+        };
+      }
+
+      return {
+        duplicateAnalysis,
+        actualDryRun
+      };
+    });
 
     res.json({
       ok: true,
-      summary: {
-        added: result.added?.length || 0,
-        updated: result.updated?.length || 0,
-        errors: result.errors?.length || 0
-      }
+      safety: {
+        counts: result.duplicateAnalysis.counts,
+        rows: result.duplicateAnalysis.rows,
+        existingTransactionCount:
+          result.duplicateAnalysis.existingTransactionCount,
+        dateRange: result.duplicateAnalysis.dateRange,
+        eligibleForSafeImport:
+          result.duplicateAnalysis.newRows.length
+      },
+      actual: result.actualDryRun
     });
   } catch (e) {
     next(e);
@@ -784,25 +1048,50 @@ app.post("/api/actual/import", async (req, res, next) => {
       });
     }
 
-    const result = await withActualBudget(api =>
-      api.importTransactions(
+    // Re-run duplicate analysis at import time. Never trust a stale
+    // browser-side preflight to decide what is safe to send.
+    const result = await withActualBudget(async api => {
+      const duplicateAnalysis =
+        await analyzeDuplicates(api, accountId, rows);
+
+      const safeRows = duplicateAnalysis.newRows;
+
+      if (!safeRows.length) {
+        return {
+          importResult: { added: [], updated: [], errors: [] },
+          duplicateAnalysis
+        };
+      }
+
+      const importResult = await api.importTransactions(
         accountId,
-        toActualTransactions(rows),
+        toActualTransactions(safeRows),
         {
           dryRun: false,
           reimportDeleted: false,
           defaultCleared: true,
           payeeNameNormalization: "original"
         }
-      )
-    );
+      );
+
+      return {
+        importResult,
+        duplicateAnalysis
+      };
+    });
 
     res.json({
       ok: true,
       summary: {
-        added: result.added?.length || 0,
-        updated: result.updated?.length || 0,
-        errors: result.errors?.length || 0
+        added: result.importResult.added?.length || 0,
+        updated: result.importResult.updated?.length || 0,
+        errors: result.importResult.errors?.length || 0,
+        skippedDefinite:
+          result.duplicateAnalysis.counts.definiteDuplicate,
+        skippedLikely:
+          result.duplicateAnalysis.counts.likelyDuplicate,
+        skippedPossible:
+          result.duplicateAnalysis.counts.possibleDuplicate
       }
     });
   } catch (e) {
@@ -821,5 +1110,5 @@ app.use((err, _req, res, _next) => {
 await ensureData();
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Actual Budget CSV Importer v3.1.1 on ${PORT}`);
+  console.log(`Actual Budget CSV Importer v3.2 on ${PORT}`);
 });

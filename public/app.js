@@ -144,6 +144,77 @@ function renderJobs(){
 function renderResult(job,index){
   const mapped=S.actual.accountMappings?.[job.profile.id];
 
+  const safety=job.dryRun?.safety;
+  const actualRun=job.dryRun?.actual;
+
+  const safetyHtml=safety ? `
+    <div class="safety-panel">
+      <h3>Duplicate safety preflight</h3>
+
+      <div class="safety-stats">
+        <div><strong>${safety.counts.definiteDuplicate}</strong><span>Definite duplicates</span></div>
+        <div><strong>${safety.counts.likelyDuplicate}</strong><span>Likely duplicates</span></div>
+        <div><strong>${safety.counts.possibleDuplicate}</strong><span>Possible matches</span></div>
+        <div><strong>${safety.counts.new}</strong><span>New / safe</span></div>
+      </div>
+
+      <div class="notice ${safety.counts.likelyDuplicate || safety.counts.possibleDuplicate ? "warn" : "good"}">
+        Safe mode will submit only the ${safety.eligibleForSafeImport} transaction(s)
+        classified as <strong>new</strong>. Definite, likely, and possible
+        duplicates are skipped.
+      </div>
+
+      ${actualRun ? `
+        <div class="notice">
+          Actual reconciliation on the safe subset:
+          ${actualRun.added} add,
+          ${actualRun.updated} update,
+          ${actualRun.errors} error(s).
+        </div>
+      ` : ""}
+
+      <details>
+        <summary>Review duplicate analysis</summary>
+        <div class="tablewrap">
+          <table class="safety-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Incoming</th>
+                <th>Existing match</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${safety.rows.map(row=>`
+                <tr>
+                  <td><span class="match ${row.classification}">${formatClassification(row.classification)}</span></td>
+                  <td>
+                    ${esc(row.incoming.date)} ·
+                    ${Number(row.incoming.amount).toFixed(2)} ·
+                    ${esc(row.incoming.description)}
+                  </td>
+                  <td>
+                    ${row.existing
+                      ? `${esc(row.existing.date)} · ${Number(row.existing.amount).toFixed(2)} · ${esc(row.existing.payee||"(no payee)")}`
+                      : "—"
+                    }
+                  </td>
+                  <td>${esc(row.reason)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </details>
+
+      ${safety.eligibleForSafeImport > 0 && actualRun?.errors === 0
+        ? `<div class="actions"><button onclick="doImport(${index})">Confirm safe import (${safety.eligibleForSafeImport})</button></div>`
+        : `<div class="notice">No transactions are currently eligible for safe import.</div>`
+      }
+    </div>
+  ` : "";
+
   return `
     ${job.result.warnings.length?`
       <div class="notice warn">${job.result.warnings.map(esc).join("<br>")}</div>
@@ -168,30 +239,35 @@ function renderResult(job,index){
       <button onclick="downloadJob(${index})">Download Actual CSV</button>
 
       ${mapped
-        ? `<button class="secondary" onclick="dryRun(${index})">Preview Actual import</button>`
+        ? `<button class="secondary" onclick="dryRun(${index})">Analyze duplicates + preview import</button>`
         : `<span class="notice">Map this profile to an Actual account to enable direct import.</span>`
       }
     </div>
 
-    ${job.dryRun?`
-      <div class="notice good">
-        Dry run: ${job.dryRun.added} add, ${job.dryRun.updated} update,
-        ${job.dryRun.errors} error(s).
-        ${job.dryRun.errors===0
-          ? `<button onclick="doImport(${index})">Confirm import</button>`
-          : ""
-        }
-      </div>
-    `:""}
+    ${safetyHtml}
 
     ${job.imported?`
       <div class="notice good">
-        Import complete: ${job.imported.added} added,
+        Import complete:
+        ${job.imported.added} added,
         ${job.imported.updated} updated,
         ${job.imported.errors} error(s).
+        Skipped for safety:
+        ${job.imported.skippedDefinite} definite,
+        ${job.imported.skippedLikely} likely,
+        ${job.imported.skippedPossible} possible.
       </div>
     `:""}
   `;
+}
+
+function formatClassification(value){
+  return ({
+    definiteDuplicate:"Definite duplicate",
+    likelyDuplicate:"Likely duplicate",
+    possibleDuplicate:"Possible match",
+    new:"New"
+  })[value] || value;
 }
 
 window.downloadJob=index=>{
@@ -229,6 +305,10 @@ window.dryRun=async index=>{
   const job=S.jobs[index];
 
   try{
+    job.error=null;
+    job.status="Analyzing existing Actual transactions…";
+    renderJobs();
+
     const response=await api("/api/actual/dry-run",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -238,19 +318,32 @@ window.dryRun=async index=>{
       })
     });
 
-    job.dryRun=response.summary;
+    job.dryRun={
+      safety:response.safety,
+      actual:response.actual
+    };
+    job.status=`Ready · ${job.result.rows.length} source transactions`;
     job.error=null;
     renderJobs();
   }catch(e){
     job.error=e.message;
+    job.status="Duplicate analysis failed";
     renderJobs();
   }
 };
 
 window.doImport=async index=>{
   const job=S.jobs[index];
+  const eligible=job.dryRun?.safety?.eligibleForSafeImport || 0;
 
-  if(!confirm(`Import ${job.result.rows.length} transactions into the mapped Actual account?`)){
+  if(!eligible){
+    return;
+  }
+
+  if(!confirm(
+    `Safe mode will import ${eligible} transaction(s). `+
+    `Transactions classified as definite, likely, or possible duplicates will be skipped. Continue?`
+  )){
     return;
   }
 
@@ -268,6 +361,7 @@ window.doImport=async index=>{
     job.imported=response.summary;
     job.dryRun=null;
     job.error=null;
+    job.status="Safe import complete";
     renderJobs();
   }catch(e){
     job.error=e.message;

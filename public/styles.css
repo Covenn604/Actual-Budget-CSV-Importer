@@ -38,3 +38,19 @@ input,select{display:block;width:100%;margin-top:5px;padding:9px;border:1px soli
 .maprow{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
 footer{margin-top:28px;color:var(--muted);font-size:12px}
 @media(max-width:720px){header{flex-direction:column}.formgrid,.maprow{grid-template-columns:1fr}}
+
+.safety-panel{margin-top:16px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.safety-panel h3{margin:0 0 12px}
+.safety-stats{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px}
+.safety-stats>div{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.safety-stats strong{display:block;font-size:22px}
+.safety-stats span{font-size:12px;color:var(--muted)}
+details{margin-top:12px}
+summary{cursor:pointer;font-weight:600}
+.match{display:inline-block;padding:3px 7px;border-radius:999px;font-size:12px;white-space:nowrap}
+.match.definiteDuplicate{background:#fde8e7;color:#9b1c16}
+.match.likelyDuplicate{background:#fff0df;color:#8a4b08}
+.match.possibleDuplicate{background:#fff7d6;color:#7a5a00}
+.match.new{background:#e7f7ef;color:#067647}
+.safety-table td{white-space:normal;vertical-align:top;min-width:140px}
+@media(max-width:720px){.safety-stats{grid-template-columns:1fr 1fr}}

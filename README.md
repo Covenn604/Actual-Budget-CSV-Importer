@@ -1,4 +1,4 @@
-# Actual Budget CSV Importer 3.1.1
+# Actual Budget CSV Importer 3.2
 
 V3.1 fixes Actual Budget connection setup and adds automatic budget discovery.
 
@@ -97,3 +97,23 @@ Budget discovery now deduplicates local/cached and remote copies of the same Act
 Actual can return the same budget more than once from `getBudgets()`. The importer now groups entries by `groupId` / Sync ID and prefers the entry whose `state` is `remote`.
 
 As a result, a budget such as `My Finances` should now appear only once in the selection dropdown.
+
+
+## 3.2 — Duplicate Safety
+
+Direct import now performs an independent duplicate preflight against the mapped Actual account before any real import is allowed.
+
+The importer fetches existing transactions for the source statement's date range plus a seven-day buffer and classifies every incoming row:
+
+- **Definite duplicate** — the same `imported_id` already exists.
+- **Likely duplicate** — same date, same amount, and same normalized payee.
+- **Possible match** — same amount with a similar payee within three days.
+- **New** — no existing match was found.
+
+Safe mode only sends **New** rows to Actual's `importTransactions`.
+
+Definite, likely, and possible duplicates are skipped by the importer. The analysis is re-run server-side immediately before a confirmed import, so a stale browser preview cannot bypass the safety check.
+
+Actual's own reconciliation/deduplication still runs on the safe subset.
+
+This is intentionally conservative. A legitimate repeated purchase that looks identical to an existing transaction may be classified as a likely/possible duplicate and skipped. The review table makes these decisions visible before import.
