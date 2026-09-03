@@ -208,6 +208,8 @@ function renderResult(job,index){
   const safety=job.dryRun?.safety;
   const actualRun=job.dryRun?.actual;
   const signTransform=safety?.signTransform;
+  const restoreIndexes=job.restoreIndexes||[];
+  const eligible=(safety?.eligibleForSafeImport||0)+restoreIndexes.length;
 
   const safetyHtml=safety ? `
     <div class="safety-panel">
@@ -221,10 +223,12 @@ function renderResult(job,index){
       </div>
 
       <div class="notice ${safety.counts.likelyDuplicate || safety.counts.possibleDuplicate ? "warn" : "good"}">
-        Safe mode will submit only the ${safety.eligibleForSafeImport} transaction(s)
-        classified as <strong>new</strong>. Definite, likely, and possible
-        duplicates are skipped.
+        ${safety.eligibleForSafeImport} new transaction(s) ready; ${restoreIndexes.length} deleted transaction(s) selected for reimport.
+        Definite, likely, and possible duplicates remain excluded.
       </div>
+
+      ${safety.counts.previouslyDeleted ? `<div class="notice warn">${safety.counts.previouslyDeleted} previously deleted transaction(s) detected by comparing Actual dry runs. They remain skipped unless you select each one below.</div>` : ""}
+      ${safety.counts.actualSkipped || safety.counts.actualMatched || safety.counts.actualError ? `<div class="notice warn">Actual skipped or could not verify ${safety.counts.actualSkipped+safety.counts.actualMatched+safety.counts.actualError} transaction(s). Review the reasons below; these rows cannot be forced through.</div>` : ""}
 
       ${signTransform?.warning ? `
         <div class="notice bad"><strong>Amount-direction warning:</strong> ${esc(signTransform.warning)}</div>
@@ -234,14 +238,14 @@ function renderResult(job,index){
 
       ${actualRun ? `
         <div class="notice">
-          Actual reconciliation on the safe subset:
+          Actual per-row preview (before optional restores):
           ${actualRun.added} add,
           ${actualRun.updated} update,
           ${actualRun.errors} error(s).
         </div>
       ` : ""}
 
-      <details>
+      <details ${safety.counts.previouslyDeleted || safety.counts.actualSkipped || safety.counts.actualMatched || safety.counts.actualError ? "open" : ""}>
         <summary>Review duplicate analysis</summary>
         <div class="tablewrap">
           <table class="safety-table">
@@ -257,7 +261,9 @@ function renderResult(job,index){
             <tbody>
               ${safety.rows.map(row=>`
                 <tr>
-                  <td><span class="match ${row.classification}">${formatClassification(row.classification)}</span></td>
+                  <td><span class="match ${row.classification}">${formatClassification(row.classification)}</span>
+                    ${row.classification==="previouslyDeleted" ? `<label class="restore-choice"><input type="checkbox" ${restoreIndexes.includes(row.sourceIndex)?"checked":""} ${job.importing?"disabled":""} onchange="toggleRestore(${index},${row.sourceIndex},this.checked)"> Reimport this previously deleted transaction</label>` : ""}
+                  </td>
                   <td>
                     ${esc(row.incoming.date)} ·
                     ${Number(row.incoming.amount).toFixed(2)} ·
@@ -278,9 +284,9 @@ function renderResult(job,index){
         </div>
       </details>
 
-      ${safety.eligibleForSafeImport > 0 && actualRun?.errors === 0
-        ? `<div class="actions"><button onclick="doImport(${index})">${signTransform?.warning ? "Import anyway" : "Confirm safe import"} (${safety.eligibleForSafeImport})</button></div>`
-        : `<div class="notice">No transactions are currently eligible for safe import.</div>`
+      ${eligible > 0 && actualRun?.errors === 0
+        ? `<div class="actions"><button ${job.importing?"disabled":""} onclick="doImport(${index})">${signTransform?.warning ? "Import anyway" : "Confirm safe import"} (${eligible})</button></div>`
+        : `<div class="notice">${actualRun?.errors ? "Resolve the failed Actual checks and run the preview again before importing." : "No transactions selected or currently ready for import."}</div>`
       }
     </div>
   ` : "";
@@ -309,7 +315,7 @@ function renderResult(job,index){
       <button onclick="downloadJob(${index})">Download Actual CSV</button>
 
       ${mapped
-        ? `<button class="secondary" onclick="dryRun(${index})">Analyze duplicates + preview import</button>`
+        ? `<button class="secondary" ${job.importing?"disabled":""} onclick="dryRun(${index})">Analyze duplicates + preview import</button>`
         : `<span class="notice">Map this profile to an Actual account to enable direct import.</span>`
       }
     </div>
@@ -317,7 +323,7 @@ function renderResult(job,index){
     ${safetyHtml}
 
     ${job.imported?`
-      <div class="notice good">
+      <div class="notice ${job.imported.errors ? "bad" : "good"}">
         Import complete:
         ${job.imported.added} added,
         ${job.imported.updated} updated,
@@ -325,7 +331,8 @@ function renderResult(job,index){
         Skipped for safety:
         ${job.imported.skippedDefinite} definite,
         ${job.imported.skippedLikely} likely,
-        ${job.imported.skippedPossible} possible.
+        ${job.imported.skippedPossible} possible;
+        ${job.imported.skippedActual||0} skipped by Actual checks or left unrestored.
       </div>
     `:""}
   `;
@@ -336,7 +343,11 @@ function formatClassification(value){
     definiteDuplicate:"Definite duplicate",
     likelyDuplicate:"Likely duplicate",
     possibleDuplicate:"Possible match",
-    new:"New"
+    new:"New — ready to import",
+    previouslyDeleted:"Previously deleted — skipped unless selected",
+    actualSkipped:"Skipped by Actual — reason unconfirmed",
+    actualMatched:"Matched by Actual — skipped",
+    actualError:"Actual check failed — skipped"
   })[value] || value;
 }
 
@@ -373,6 +384,9 @@ window.downloadJob=index=>{
 
 window.dryRun=async index=>{
   const job=S.jobs[index];
+  if(job.importing)return;
+  job.dryRun=null;
+  job.restoreIndexes=[];
 
   try{
     job.error=null;
@@ -392,6 +406,7 @@ window.dryRun=async index=>{
       safety:response.safety,
       actual:response.actual
     };
+    job.restoreIndexes=[];
     job.status=`Ready · ${job.result.rows.length} source transactions`;
     job.error=null;
     renderJobs();
@@ -402,9 +417,20 @@ window.dryRun=async index=>{
   }
 };
 
+window.toggleRestore=(index,sourceIndex,checked)=>{
+  const job=S.jobs[index];
+  if(job.importing)return;
+  const choices=new Set(job.restoreIndexes||[]);
+  if(checked)choices.add(sourceIndex); else choices.delete(sourceIndex);
+  job.restoreIndexes=[...choices];
+  renderJobs();
+};
+
 window.doImport=async index=>{
   const job=S.jobs[index];
-  const eligible=job.dryRun?.safety?.eligibleForSafeImport || 0;
+  if(job.importing)return;
+  const restoreIndexes=[...(job.restoreIndexes||[])];
+  const eligible=(job.dryRun?.safety?.eligibleForSafeImport || 0)+restoreIndexes.length;
   const signWarning=job.dryRun?.safety?.signTransform?.warning;
 
   if(!eligible){
@@ -414,29 +440,37 @@ window.doImport=async index=>{
   if(!confirm(
     (signWarning ? `Amount-direction warning: ${signWarning}\n\n` : "")+
     `Safe mode will import ${eligible} transaction(s). `+
+    `${restoreIndexes.length} previously deleted transaction(s) selected for reimport. `+
     `Transactions classified as definite, likely, or possible duplicates will be skipped. Continue?`
   )){
     return;
   }
 
   try{
+    job.importing=true;
+    renderJobs();
     const response=await api("/api/actual/import",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         profileId:job.profile.id,
         rows:job.result.rows,
+        restoreIndexes,
         confirm:true
       })
     });
 
     job.imported=response.summary;
     job.dryRun=null;
+    job.restoreIndexes=[];
     job.error=null;
-    job.status="Safe import complete";
+    job.status=response.summary.errors ? "Import finished with errors — review the counts" : "Safe import complete";
     renderJobs();
   }catch(e){
     job.error=e.message;
+    renderJobs();
+  }finally{
+    job.importing=false;
     renderJobs();
   }
 };

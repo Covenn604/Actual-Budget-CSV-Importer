@@ -384,13 +384,27 @@ Same amount and a similar payee within three days.
 
 No matching existing transaction was found.
 
-Safe mode sends only transactions classified as **New** to Actual.
+Safe mode sends transactions classified as **New — ready to import**, plus only the previously deleted rows you explicitly select to reimport.
 
 Definite, likely, and possible duplicates are skipped.
 
 The duplicate analysis is run again on the server immediately before the confirmed import so the browser cannot submit a stale safety result.
 
 Actual's own `importTransactions` reconciliation then runs on the safe subset.
+
+## Previously deleted transactions (v3.3.3)
+
+For each candidate that passes our duplicate checks, the importer runs Actual's non-writing dry run with deleted reimports disabled. If that skips the row, it compares another dry run with deleted reimports enabled.
+
+- **New — ready to import:** Actual would add the row normally.
+- **Previously deleted — skipped unless selected:** only the restore-enabled dry run would add the row. An unchecked **Reimport this previously deleted transaction** choice appears next to it.
+- **Skipped by Actual — reason unconfirmed:** the comparison does not establish a deleted import; no restore override is offered.
+- **Matched by Actual — skipped:** Actual would reconcile with an existing transaction rather than add one.
+- **Actual check failed — skipped:** an error or unexpected result prevented verification.
+
+Review the date, signed amount, and description, select only the deleted transactions you intend to bring back, and confirm. Choices reset whenever you rerun the preview. The server repeats the checks before importing; `reimportDeleted` is enabled only for each selected, freshly verified deleted row. Normal duplicate checks remain enabled. Imports are processed one row at a time and rechecked, so totals may decrease if another row has already satisfied a match. Previewing large statements can take longer because of these extra checks.
+
+Detection is inferred from Actual's paired dry-run behavior, not a direct deleted flag. A normal skip alone is never labelled previously deleted. The test suite uses simulated API responses; live compatibility with your Actual 26.9.0 budget should be checked on a backed-up test budget before a large import.
 
 This approach is intentionally conservative. It is preferable to skip a questionable transaction for manual review than silently create a duplicate financial transaction.
 
@@ -427,7 +441,7 @@ Persistent profiles/settings survive container replacement because `/app/data` i
 For more controlled deployments, use a versioned image tag instead of `latest`, for example:
 
 ```text
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.2
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.3
 ```
 
 ## Updating the repository with the replacement ZIP
@@ -438,7 +452,7 @@ The release ZIP contains complete replacement files, not a command-line patch:
 2. Open the repository on GitHub and choose **Add file → Upload files**.
 3. Drag the extracted files and folders into the upload area. Include the `.github` folder so the Docker workflow receives the new version tag.
 4. Commit the upload to `main`.
-5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.2` tag.
+5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.3` tag. Include the new `import-reconciliation.js` file and updated Dockerfile in your upload.
 
 The upload replaces application files but does not touch the persistent `/app/data` volume, so saved settings and profiles remain intact.
 
@@ -452,7 +466,7 @@ Images are published to:
 
 ```text
 ghcr.io/covenn604/actual-budget-csv-importer:latest
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.2
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.3
 ```
 
 ---
@@ -474,7 +488,15 @@ For security:
 
 # Current version
 
-**3.3.2**
+**3.3.3**
+
+## 3.3.3
+
+- Compares Actual dry runs to identify recoverable previously deleted imports
+- Adds explicit, unchecked per-row reimport choices and confirmation counts
+- Distinguishes uncertain skips, Actual matches, and check errors from new rows
+- Revalidates each candidate before writing; restore is never enabled for the whole statement
+- Includes automated mocked-API regression tests; API remains pinned to `26.9.0`
 
 ## 3.3.2
 

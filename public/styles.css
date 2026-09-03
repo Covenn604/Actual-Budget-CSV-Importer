@@ -59,5 +59,10 @@ summary{cursor:pointer;font-weight:600}
 .match.likelyDuplicate{background:#fff0df;color:#8a4b08}
 .match.possibleDuplicate{background:#fff7d6;color:#7a5a00}
 .match.new{background:#e7f7ef;color:#067647}
+.match.previouslyDeleted,.match.actualSkipped,.match.actualMatched{background:#fff0df;color:#8a4b08}
+.match.actualError{background:#fde8e7;color:#9b1c16}
+.restore-choice{display:block;margin-top:10px;color:var(--text)}
+.restore-choice input{display:inline-block;width:auto;margin:0 5px 0 0}
+button:disabled{opacity:.55;cursor:wait}
 .safety-table td{white-space:normal;vertical-align:top;min-width:140px}
 @media(max-width:720px){.safety-stats{grid-template-columns:1fr 1fr}}

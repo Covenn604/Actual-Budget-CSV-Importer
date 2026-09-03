@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as actual from "@actual-app/api";
+import { probeTransaction, importCandidate } from "./import-reconciliation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageMetadata = JSON.parse(
@@ -1115,6 +1116,20 @@ app.put("/api/actual/mappings/:profileId", async (req, res, next) => {
 
 /* Safe dry run + confirmed import */
 
+async function reviewActualCandidates(api, accountId, rows, profile, analysis) {
+  for (const row of analysis.rows) {
+    if (row.classification !== "new") continue;
+    const transaction = toActualTransactions([rows[row.sourceIndex]], profile)[0];
+    Object.assign(row, await probeTransaction(api, accountId, transaction));
+  }
+  for (const classification of ["new", "previouslyDeleted", "actualSkipped", "actualMatched", "actualError"]) {
+    analysis.counts[classification] = analysis.rows.filter(row => row.classification === classification).length;
+  }
+  analysis.newRows = analysis.rows.filter(row => row.classification === "new")
+    .map(row => rows[row.sourceIndex]);
+  return analysis;
+}
+
 app.post("/api/actual/dry-run", async (req, res, next) => {
   try {
     const { profileId, rows } = req.body || {};
@@ -1145,33 +1160,12 @@ app.post("/api/actual/dry-run", async (req, res, next) => {
       const duplicateAnalysis =
         await analyzeDuplicates(api, accountId, rows, profile);
 
-      // Actual's own reconciliation is still shown for comparison, but
-      // the app's safe import only submits rows independently classified
-      // as new.
-      let actualDryRun = {
-        added: 0,
+      await reviewActualCandidates(api, accountId, rows, profile, duplicateAnalysis);
+      const actualDryRun = {
+        added: duplicateAnalysis.counts.new,
         updated: 0,
-        errors: 0
+        errors: duplicateAnalysis.counts.actualError
       };
-
-      if (duplicateAnalysis.newRows.length) {
-        const actualResult = await api.importTransactions(
-          accountId,
-          toActualTransactions(duplicateAnalysis.newRows, profile),
-          {
-            dryRun: true,
-            reimportDeleted: false,
-            defaultCleared: true,
-            payeeNameNormalization: "original"
-          }
-        );
-
-        actualDryRun = {
-          added: actualResult.added?.length || 0,
-          updated: actualResult.updated?.length || 0,
-          errors: actualResult.errors?.length || 0
-        };
-      }
 
       return {
         duplicateAnalysis,
@@ -1200,7 +1194,7 @@ app.post("/api/actual/dry-run", async (req, res, next) => {
 
 app.post("/api/actual/import", async (req, res, next) => {
   try {
-    const { profileId, rows, confirm } = req.body || {};
+    const { profileId, rows, confirm, restoreIndexes = [] } = req.body || {};
 
     if (confirm !== true) {
       return res.status(400).json({
@@ -1213,6 +1207,12 @@ app.post("/api/actual/import", async (req, res, next) => {
         error: "No transactions supplied."
       });
     }
+
+    if (!Array.isArray(restoreIndexes) || restoreIndexes.some(index =>
+      !Number.isInteger(index) || index < 0 || index >= rows.length)) {
+      return res.status(400).json({ error: "Invalid deleted-transaction selection. Run the preview again." });
+    }
+    const selectedRestores = new Set(restoreIndexes);
 
     const settings = await readSettings();
     const accountId =
@@ -1236,28 +1236,32 @@ app.post("/api/actual/import", async (req, res, next) => {
       const duplicateAnalysis =
         await analyzeDuplicates(api, accountId, rows, profile);
 
-      const safeRows = duplicateAnalysis.newRows;
-
-      if (!safeRows.length) {
-        return {
-          importResult: { added: [], updated: [], errors: [] },
-          duplicateAnalysis
-        };
-      }
-
-      const importResult = await api.importTransactions(
-        accountId,
-        toActualTransactions(safeRows, profile),
-        {
-          dryRun: false,
-          reimportDeleted: false,
-          defaultCleared: true,
-          payeeNameNormalization: "original"
+      await reviewActualCandidates(api, accountId, rows, profile, duplicateAnalysis);
+      const importResult = { added: [], updated: [], errors: [] };
+      let skippedActual = 0;
+      for (const row of duplicateAnalysis.rows) {
+        const selected = selectedRestores.has(row.sourceIndex);
+        if (row.classification !== "new" && !(row.classification === "previouslyDeleted" && selected)) {
+          if (["previouslyDeleted", "actualSkipped", "actualMatched", "actualError"].includes(row.classification)) skippedActual++;
+          continue;
         }
-      );
+        const transaction = toActualTransactions([rows[row.sourceIndex]], profile)[0];
+        try {
+          const outcome = await importCandidate(api, accountId, transaction, row.classification, selected);
+          for (const field of ["added", "updated", "errors"]) {
+            importResult[field].push(...(outcome[field] || []));
+          }
+          if (outcome.skipped || (!outcome.added?.length && !outcome.updated?.length && !outcome.errors?.length)) skippedActual++;
+        } catch (error) {
+          importResult.errors.push({ message: error.message });
+          // Earlier rows may have succeeded; return their counts rather than
+          // hiding them behind a generic failed-request response.
+        }
+      }
 
       return {
         importResult,
+        skippedActual,
         duplicateAnalysis
       };
     });
@@ -1268,6 +1272,7 @@ app.post("/api/actual/import", async (req, res, next) => {
         added: result.importResult.added?.length || 0,
         updated: result.importResult.updated?.length || 0,
         errors: result.importResult.errors?.length || 0,
+        skippedActual: result.skippedActual,
         skippedDefinite:
           result.duplicateAnalysis.counts.definiteDuplicate,
         skippedLikely:
