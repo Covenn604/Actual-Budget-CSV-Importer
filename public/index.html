@@ -47,6 +47,22 @@
     </section>
 
     <section id="actualTab" class="hidden">
+      <div class="card compatibility-card">
+        <div class="section-head">
+          <div>
+            <h2>Actual compatibility</h2>
+            <p>Keep the bundled API and Actual Server on the same version.</p>
+          </div>
+          <button class="secondary" id="refreshCompatibility">Check versions</button>
+        </div>
+        <div id="compatibilityDisplay" class="version-grid" aria-live="polite">
+          <div><span>Importer</span><strong>Loading…</strong></div>
+          <div><span>Bundled Actual API</span><strong>Loading…</strong></div>
+          <div><span>Detected Actual Server</span><strong>Not checked</strong></div>
+        </div>
+        <div id="compatibilityMessage"></div>
+      </div>
+
       <div class="card">
         <h2>1. Connect to Actual Server</h2>
         <p>Connection details are stored only in the persistent volume. Saved passwords are never returned to the browser.</p>

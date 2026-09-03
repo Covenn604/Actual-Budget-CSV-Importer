@@ -7,7 +7,7 @@ services:
       - "${IMPORTER_PORT:-8080}:3000"
 
     volumes:
-      # Persistent importer configuration, profiles, settings, and Actual API cache.
+      # Persistent importer configuration, profiles, and settings.
       - ${IMPORTER_DATA_PATH:-./data}:/app/data
 
       # Optional: trust a custom/self-signed certificate used by your Actual server.

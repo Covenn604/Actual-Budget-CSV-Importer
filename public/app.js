@@ -1,4 +1,4 @@
-const S={profiles:[],jobs:[],config:null,actual:{},accounts:[],budgets:[]},
+const S={profiles:[],jobs:[],config:null,actual:{},accounts:[],budgets:[],compatibility:null},
 $=x=>document.getElementById(x),
 esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -39,8 +39,43 @@ async function loadActual(){
   renderMappings();
 }
 
+function renderCompatibility(){
+  const info=S.compatibility||{};
+  const serverVersion=info.serverVersion||"Not detected";
+
+  $("compatibilityDisplay").innerHTML=`
+    <div><span>Importer</span><strong>v${esc(info.importerVersion||"unknown")}</strong></div>
+    <div><span>Bundled Actual API</span><strong>v${esc(info.actualApiVersion||"unknown")}</strong></div>
+    <div><span>Detected Actual Server</span><strong>${info.serverVersion?`v${esc(serverVersion)}`:esc(serverVersion)}</strong></div>
+  `;
+
+  if(info.versionsMatch===false){
+    $("compatibilityMessage").innerHTML=`
+      <div class="notice bad"><strong>Version mismatch:</strong> ${esc(info.warning)}</div>
+    `;
+  }else if(info.versionsMatch===true){
+    $("compatibilityMessage").innerHTML=`
+      <div class="notice good">Actual API and Actual Server versions match.</div>
+    `;
+  }else{
+    $("compatibilityMessage").innerHTML=`
+      <div class="notice warn">${esc(info.detectionError||"Server version has not been detected yet.")}</div>
+    `;
+  }
+}
+
+async function loadCompatibility(){
+  try{
+    S.compatibility=await api("/api/actual/compatibility");
+  }catch(e){
+    S.compatibility={detectionError:e.message};
+  }
+  renderCompatibility();
+}
+
 loadProfiles();
 loadActual();
+loadCompatibility();
 
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=async()=>{
@@ -52,6 +87,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     });
 
     if(button.dataset.tab==="actual"){
+      await loadCompatibility();
       // If connection details were previously saved, refresh discovered
       // budgets automatically. The saved selection is already visible even
       // if this network refresh fails.
@@ -642,6 +678,7 @@ $("saveActual").onclick=async()=>{
     $("encryptionPassword").value="";
 
     await loadActual();
+    await loadCompatibility();
 
     $("actualMessage").innerHTML=`
       <div class="notice good">Connection settings saved locally.</div>
@@ -662,6 +699,7 @@ async function discoverBudgets(showMessage=true){
     }
 
     const discovered=await api("/api/actual/budgets");
+    await loadCompatibility();
 
     // Server already deduplicates by Sync ID. Keep the current saved budget
     // visible if for some reason it is not returned by discovery.
@@ -711,6 +749,7 @@ async function discoverBudgets(showMessage=true){
 }
 
 $("discoverBudgets").onclick=()=>discoverBudgets(true);
+$("refreshCompatibility").onclick=()=>loadCompatibility();
 
 function renderBudgetSelect(){
   const selected=S.actual.syncId||"";
@@ -781,6 +820,9 @@ $("testActual").onclick=async()=>{
     const result=await api("/api/actual/test",{
       method:"POST"
     });
+
+    S.compatibility=result.compatibility;
+    renderCompatibility();
 
     $("budgetMessage").innerHTML=`
       <div class="notice good">

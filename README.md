@@ -16,6 +16,7 @@ The application is designed for banks and credit-card providers that export CSV 
 - Persistent JSON profile storage
 - Import/export profile JSON for sharing
 - Direct connection to self-hosted Actual Budget
+- Actual compatibility display for importer, bundled API, and detected server versions
 - Automatic Actual budget discovery
 - Persistent selected-budget and profile-to-account mappings
 - Duplicate-safety preflight before direct imports
@@ -180,7 +181,6 @@ profiles/
   my-credit-card.json
 
 settings.json
-actual-cache/
 ```
 
 `profiles/*.json` contains portable CSV mapping rules.
@@ -288,6 +288,14 @@ Choose **Invert amount** for the direct Actual import rule in that case.
 
 Open **Actual setup**.
 
+At the top of the page, **Actual compatibility** shows:
+
+- importer version
+- bundled `@actual-app/api` version
+- Actual Server version detected with `getServerVersion()`
+
+The bundled API and server should use the same version. A red warning appears when they differ because version mismatches can cause database migration errors or an unexpected `No budget file is open` error. If the server version cannot be detected, save the connection details, verify that the importer container can reach the server, and click **Check versions**.
+
 ## 1. Connect to Actual Server
 
 Enter:
@@ -324,6 +332,29 @@ Mastercard CSV profile  -> Credit Card
 ```
 
 These mappings remain local and are not included in exported profile JSON.
+
+---
+
+# Troubleshooting Actual setup
+
+## API and server versions differ
+
+Update the older component so **Bundled Actual API** and **Detected Actual Server** show the same version. This release intentionally pins the importer to `@actual-app/api` `26.9.0`, so it is intended to connect to Actual Server `26.9.0`. After updating, restart/redeploy the importer and click **Check versions**.
+
+## `No budget file is open`
+
+Confirm that the intended budget is selected, then check the compatibility display before testing the budget again. This message can appear when a version mismatch prevents Actual's local working copy from opening or finishing its migrations. If the versions already match, use **Discover budgets** to refresh the list and select the budget again.
+
+## Migration error
+
+Do not repeatedly retry imports. First make the API and server versions match, redeploy the importer to clear its temporary working copy, and test the selected budget again. Your source CSVs, profiles, and persistent settings are not stored in that temporary copy.
+
+## Server version cannot be detected
+
+- Verify the URL and password, then click **Save connection**.
+- Confirm that the Actual Server is reachable from inside the importer container.
+- For a private/self-signed certificate, configure `ACTUAL_CA_CERT_PATH` and `NODE_EXTRA_CA_CERTS` as described above.
+- Click **Check versions** again after correcting the connection.
 
 ---
 
@@ -396,8 +427,20 @@ Persistent profiles/settings survive container replacement because `/app/data` i
 For more controlled deployments, use a versioned image tag instead of `latest`, for example:
 
 ```text
-ghcr.io/covenn604/actual-budget-csv-importer:3.2.2
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.1
 ```
+
+## Updating the repository with the replacement ZIP
+
+The release ZIP contains complete replacement files, not a command-line patch:
+
+1. Extract the ZIP on your computer.
+2. Open the repository on GitHub and choose **Add file → Upload files**.
+3. Drag the extracted files and folders into the upload area. Include the `.github` folder so the Docker workflow receives the new version tag.
+4. Commit the upload to `main`.
+5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.1` tag.
+
+The upload replaces application files but does not touch the persistent `/app/data` volume, so saved settings and profiles remain intact.
 
 ---
 
@@ -409,7 +452,7 @@ Images are published to:
 
 ```text
 ghcr.io/covenn604/actual-budget-csv-importer:latest
-ghcr.io/covenn604/actual-budget-csv-importer:3.2.2
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.1
 ```
 
 ---
@@ -431,9 +474,18 @@ For security:
 
 # Current version
 
-**3.3.0**
+**3.3.1**
 
-Changes in 3.2.2:
+## 3.3.1
+
+- Added an Actual setup compatibility display for importer, bundled API, and detected server versions
+- Detects the server version through Actual's `getServerVersion()` API
+- Clearly warns when the bundled Actual API and server versions differ
+- Improved migration, `No budget file is open`, network, and certificate error guidance
+- Pinned `@actual-app/api` to `26.9.0`
+- Updated Docker image workflow tagging to `3.3.1`
+
+## 3.2.2
 
 - generalized Docker Compose paths using environment variables
 - added `.env.example`

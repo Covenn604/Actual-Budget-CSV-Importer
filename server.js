@@ -7,6 +7,25 @@ import { fileURLToPath } from "node:url";
 import * as actual from "@actual-app/api";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const packageMetadata = JSON.parse(
+  await fs.readFile(path.join(__dirname, "package.json"), "utf8")
+);
+const IMPORTER_VERSION = packageMetadata.version;
+const CONFIGURED_ACTUAL_API_VERSION =
+  packageMetadata.dependencies?.["@actual-app/api"] || "unknown";
+let ACTUAL_API_VERSION = CONFIGURED_ACTUAL_API_VERSION;
+
+try {
+  const installedActualMetadata = JSON.parse(
+    await fs.readFile(
+      path.join(__dirname, "node_modules", "@actual-app", "api", "package.json"),
+      "utf8"
+    )
+  );
+  ACTUAL_API_VERSION = installedActualMetadata.version || ACTUAL_API_VERSION;
+} catch {
+  // package.json is still the source of truth before dependencies are installed.
+}
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
@@ -318,6 +337,64 @@ async function initActualServer(config) {
     serverURL: config.serverURL,
     password: config.password
   });
+}
+
+function normalizedVersion(value) {
+  const match = String(value || "").match(/\d+\.\d+\.\d+/);
+  return match ? match[0] : String(value || "").replace(/^v/i, "");
+}
+
+function readServerVersion(result) {
+  if (typeof result === "string") return result;
+  if (result?.version) return String(result.version);
+  if (result?.error === "no-server") {
+    throw new Error("Actual API is not connected to a server.");
+  }
+  if (result?.error === "network-failure") {
+    throw new Error("Actual Server version could not be detected because the server did not respond.");
+  }
+  throw new Error("Actual Server returned an unreadable version response.");
+}
+
+function compatibilityDetails(serverVersion = null, detectionError = null) {
+  const detectedServerVersion = serverVersion
+    ? normalizedVersion(serverVersion)
+    : null;
+  const versionsMatch = detectedServerVersion
+    ? normalizedVersion(ACTUAL_API_VERSION) === detectedServerVersion
+    : null;
+
+  return {
+    importerVersion: IMPORTER_VERSION,
+    actualApiVersion: ACTUAL_API_VERSION,
+    serverVersion: detectedServerVersion,
+    versionsMatch,
+    detectionError,
+    warning: versionsMatch === false
+      ? `Bundled Actual API ${ACTUAL_API_VERSION} does not match Actual Server ${detectedServerVersion}. Version mismatches can cause migration errors or \"No budget file is open\".`
+      : null
+  };
+}
+
+async function detectCompatibility() {
+  const settings = await readSettings();
+  const config = settings.actual || {};
+
+  if (!config.serverURL || !config.password) {
+    return compatibilityDetails(
+      null,
+      "Save the Actual Server URL and password to detect the server version."
+    );
+  }
+
+  try {
+    const serverVersion = await withActualServer(async api =>
+      readServerVersion(await api.getServerVersion())
+    );
+    return compatibilityDetails(serverVersion);
+  } catch (error) {
+    return compatibilityDetails(null, friendlyActualError(error));
+  }
 }
 
 async function withActualServer(fn) {
@@ -637,7 +714,7 @@ async function analyzeDuplicates(api, accountId, rows, profile) {
 /* ---------------- API routes ---------------- */
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, version: "3.3.0" });
+  res.json({ ok: true, version: IMPORTER_VERSION });
 });
 
 /* Profiles */
@@ -802,6 +879,14 @@ app.post("/api/convert", upload.single("file"), async (req, res, next) => {
 
 /* Actual connection settings */
 
+app.get("/api/actual/compatibility", async (_req, res, next) => {
+  try {
+    res.json(await detectCompatibility());
+  } catch (e) {
+    next(e);
+  }
+});
+
 app.get("/api/actual/settings", async (_req, res, next) => {
   try {
     const settings = await readSettings();
@@ -942,9 +1027,13 @@ app.post("/api/actual/select-budget", async (req, res, next) => {
 
 app.post("/api/actual/test", async (_req, res, next) => {
   try {
-    const result = await withActualBudget(async api => ({
-      accounts: (await api.getAccounts()).length
-    }));
+    const result = await withActualBudget(async api => {
+      const serverVersion = readServerVersion(await api.getServerVersion());
+      return {
+        accounts: (await api.getAccounts()).length,
+        compatibility: compatibilityDetails(serverVersion)
+      };
+    });
 
     res.json({ ok: true, ...result });
   } catch (e) {
@@ -1160,10 +1249,30 @@ app.post("/api/actual/import", async (req, res, next) => {
   }
 });
 
+function friendlyActualError(error) {
+  const original = String(error?.message || error || "Internal server error");
+  const message = original.toLowerCase();
+
+  if (message.includes("no budget file is open")) {
+    return `No budget file is open. Confirm the selected budget, then make sure Actual API ${ACTUAL_API_VERSION} matches the Actual Server version. A version mismatch can prevent the budget from opening or completing migrations.`;
+  }
+  if (message.includes("migration")) {
+    return `${original} Check that Actual API ${ACTUAL_API_VERSION} matches the Actual Server version; mismatches can cause migration failures.`;
+  }
+  if (message.includes("certificate") || message.includes("self signed")) {
+    return `${original} If the server uses a private certificate, configure ACTUAL_CA_CERT_PATH and NODE_EXTRA_CA_CERTS as described in the README.`;
+  }
+  if (message.includes("fetch failed") || message.includes("econnrefused") || message.includes("network")) {
+    return `${original} Verify that the Actual Server URL is reachable from the importer container.`;
+  }
+
+  return original;
+}
+
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({
-    error: err.message || "Internal server error",
+    error: friendlyActualError(err),
     code: err.code || undefined
   });
 });
@@ -1171,5 +1280,5 @@ app.use((err, _req, res, _next) => {
 await ensureData();
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Actual Budget CSV Importer v3.3 on ${PORT}`);
+  console.log(`Actual Budget CSV Importer v${IMPORTER_VERSION} on ${PORT}`);
 });
