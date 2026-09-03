@@ -185,8 +185,8 @@
         <select id="actualImportSign">
           <option value="preserve">Preserve converted amount</option>
           <option value="invert">Invert amount</option>
-          <option value="expenses-negative">Force negative</option>
-          <option value="expenses-positive">Force positive</option>
+          <option value="expenses-negative">Force every amount negative (payments only)</option>
+          <option value="expenses-positive">Force every amount positive (deposits only)</option>
         </select>
       </label>
 
@@ -194,7 +194,7 @@
       <label class="dc hidden">Credit column<select id="mapCredit"></select></label>
     </div>
 
-    <div class="notice">CSV conversion controls the downloadable CSV. Direct Actual import sign is applied only to duplicate analysis and API imports.</div><div id="mapperPreview" class="tablewrap"></div>
+    <div class="notice">CSV conversion controls the downloadable CSV. Direct Actual import sign is applied only to duplicate analysis and API imports. For mixed-sign credit-card statements, use <strong>Invert amount</strong> when positive purchases and negative payments/refunds must swap directions; forcing a sign makes every row the same direction.</div><div id="mapperPreview" class="tablewrap"></div>
     <div id="mapperMessage"></div>
 
     <div class="dialog-actions">

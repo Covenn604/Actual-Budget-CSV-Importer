@@ -427,7 +427,7 @@ Persistent profiles/settings survive container replacement because `/app/data` i
 For more controlled deployments, use a versioned image tag instead of `latest`, for example:
 
 ```text
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.1
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.2
 ```
 
 ## Updating the repository with the replacement ZIP
@@ -438,7 +438,7 @@ The release ZIP contains complete replacement files, not a command-line patch:
 2. Open the repository on GitHub and choose **Add file → Upload files**.
 3. Drag the extracted files and folders into the upload area. Include the `.github` folder so the Docker workflow receives the new version tag.
 4. Commit the upload to `main`.
-5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.1` tag.
+5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.2` tag.
 
 The upload replaces application files but does not touch the persistent `/app/data` volume, so saved settings and profiles remain intact.
 
@@ -452,7 +452,7 @@ Images are published to:
 
 ```text
 ghcr.io/covenn604/actual-budget-csv-importer:latest
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.1
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.2
 ```
 
 ---
@@ -474,7 +474,16 @@ For security:
 
 # Current version
 
-**3.3.1**
+**3.3.2**
+
+## 3.3.2
+
+- Changed duplicate/safe-import review to show the exact signed amount sent to Actual
+- Added the converted source amount beside the final Actual amount for comparison
+- Added a prominent warning when Force negative/positive collapses a mixed-sign statement into one direction
+- Repeats the amount-direction warning in the final confirmation and labels the action **Import anyway**
+- Clarified that Force negative creates payments only and Force positive creates deposits only
+- Documented that mixed-sign credit-card statements commonly require **Invert amount**
 
 ## 3.3.1
 

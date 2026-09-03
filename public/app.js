@@ -207,6 +207,7 @@ function renderResult(job,index){
 
   const safety=job.dryRun?.safety;
   const actualRun=job.dryRun?.actual;
+  const signTransform=safety?.signTransform;
 
   const safetyHtml=safety ? `
     <div class="safety-panel">
@@ -225,6 +226,12 @@ function renderResult(job,index){
         duplicates are skipped.
       </div>
 
+      ${signTransform?.warning ? `
+        <div class="notice bad"><strong>Amount-direction warning:</strong> ${esc(signTransform.warning)}</div>
+      ` : signTransform?.changedCount ? `
+        <div class="notice">The selected direct-import rule changes the sign of ${signTransform.changedCount} transaction(s). The review table below shows the final amounts sent to Actual.</div>
+      ` : ""}
+
       ${actualRun ? `
         <div class="notice">
           Actual reconciliation on the safe subset:
@@ -241,7 +248,8 @@ function renderResult(job,index){
             <thead>
               <tr>
                 <th>Status</th>
-                <th>Incoming</th>
+                <th>Sent to Actual</th>
+                <th>Converted source</th>
                 <th>Existing match</th>
                 <th>Reason</th>
               </tr>
@@ -255,6 +263,7 @@ function renderResult(job,index){
                     ${Number(row.incoming.amount).toFixed(2)} ·
                     ${esc(row.incoming.description)}
                   </td>
+                  <td>${Number(row.incoming.sourceAmount).toFixed(2)}</td>
                   <td>
                     ${row.existing
                       ? `${esc(row.existing.date)} · ${Number(row.existing.amount).toFixed(2)} · ${esc(row.existing.payee||"(no payee)")}`
@@ -270,7 +279,7 @@ function renderResult(job,index){
       </details>
 
       ${safety.eligibleForSafeImport > 0 && actualRun?.errors === 0
-        ? `<div class="actions"><button onclick="doImport(${index})">Confirm safe import (${safety.eligibleForSafeImport})</button></div>`
+        ? `<div class="actions"><button onclick="doImport(${index})">${signTransform?.warning ? "Import anyway" : "Confirm safe import"} (${safety.eligibleForSafeImport})</button></div>`
         : `<div class="notice">No transactions are currently eligible for safe import.</div>`
       }
     </div>
@@ -396,12 +405,14 @@ window.dryRun=async index=>{
 window.doImport=async index=>{
   const job=S.jobs[index];
   const eligible=job.dryRun?.safety?.eligibleForSafeImport || 0;
+  const signWarning=job.dryRun?.safety?.signTransform?.warning;
 
   if(!eligible){
     return;
   }
 
   if(!confirm(
+    (signWarning ? `Amount-direction warning: ${signWarning}\n\n` : "")+
     `Safe mode will import ${eligible} transaction(s). `+
     `Transactions classified as definite, likely, or possible duplicates will be skipped. Continue?`
   )){

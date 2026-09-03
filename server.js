@@ -459,6 +459,33 @@ function applyActualImportSign(amount, profile) {
   return value;
 }
 
+function describeActualSignTransform(rows, profile) {
+  const mode = profile?.actualImportSign || "preserve";
+  const sourceAmounts = rows
+    .map(row => Number(row.amount))
+    .filter(Number.isFinite);
+  const hasPositive = sourceAmounts.some(amount => amount > 0);
+  const hasNegative = sourceAmounts.some(amount => amount < 0);
+  const changedCount = sourceAmounts.filter(amount =>
+    applyActualImportSign(amount, profile) !== amount
+  ).length;
+
+  let warning = null;
+  if (hasPositive && hasNegative && mode === "expenses-negative") {
+    warning = "This statement contains both positive and negative amounts, but Force every amount negative will send all of them to Actual as payments. Use Invert amount when positive purchases and negative payments/refunds need to swap directions.";
+  }
+  if (hasPositive && hasNegative && mode === "expenses-positive") {
+    warning = "This statement contains both positive and negative amounts, but Force every amount positive will send all of them to Actual as deposits. Use Preserve or Invert amount when both transaction directions must remain distinct.";
+  }
+
+  return {
+    mode,
+    changedCount,
+    hasMixedSourceSigns: hasPositive && hasNegative,
+    warning
+  };
+}
+
 function toActualTransactions(rows, profile) {
   return rows.map(row => {
     const transformedAmount = applyActualImportSign(row.amount, profile);
@@ -591,7 +618,8 @@ async function analyzeDuplicates(api, accountId, rows, profile) {
 
   for (let sourceIndex = 0; sourceIndex < rows.length; sourceIndex++) {
     const row = rows[sourceIndex];
-    const incomingAmount = actual.utils.amountToInteger(applyActualImportSign(row.amount, profile));
+    const transformedAmount = applyActualImportSign(row.amount, profile);
+    const incomingAmount = actual.utils.amountToInteger(transformedAmount);
     const incomingPayee = normalizePayee(row.description);
 
     let classification = "new";
@@ -670,7 +698,10 @@ async function analyzeDuplicates(api, accountId, rows, profile) {
       reason,
       incoming: {
         date: row.date,
-        amount: row.amount,
+        amount: actual.utils.integerToAmount
+          ? actual.utils.integerToAmount(incomingAmount)
+          : incomingAmount / 100,
+        sourceAmount: Number(row.amount),
         description: row.description,
         importedId: row.importedId || ""
       },
@@ -1157,7 +1188,8 @@ app.post("/api/actual/dry-run", async (req, res, next) => {
           result.duplicateAnalysis.existingTransactionCount,
         dateRange: result.duplicateAnalysis.dateRange,
         eligibleForSafeImport:
-          result.duplicateAnalysis.newRows.length
+          result.duplicateAnalysis.newRows.length,
+        signTransform: describeActualSignTransform(rows, profile)
       },
       actual: result.actualDryRun
     });
