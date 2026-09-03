@@ -384,7 +384,7 @@ Same amount and a similar payee within three days.
 
 No matching existing transaction was found.
 
-Safe mode sends transactions classified as **New — ready to import**, plus only the previously deleted rows you explicitly select to reimport.
+Safe mode sends transactions classified as **New — ready to import**, plus only the previously deleted rows you select to restore or Actual matches you explicitly confirm as separate purchases.
 
 Definite, likely, and possible duplicates are skipped.
 
@@ -405,6 +405,18 @@ For each candidate that passes our duplicate checks, the importer runs Actual's 
 Review the date, signed amount, and description, select only the deleted transactions you intend to bring back, and confirm. Choices reset whenever you rerun the preview. The server repeats the checks before importing; `reimportDeleted` is enabled only for each selected, freshly verified deleted row. Normal duplicate checks remain enabled. Imports are processed one row at a time and rechecked, so totals may decrease if another row has already satisfied a match. Previewing large statements can take longer because of these extra checks.
 
 Detection is inferred from Actual's paired dry-run behavior, not a direct deleted flag. A normal skip alone is never labelled previously deleted. The test suite uses simulated API responses; live compatibility with your Actual 26.9.0 budget should be checked on a backed-up test budget before a large import.
+
+## Separate repeat purchases (v3.3.4)
+
+Actual may match an existing same-amount purchase up to seven days away. Two genuine visits to the same merchant can therefore be treated as one purchase. Version 3.3.4 reads Actual's `updatedPreview` markers, including ignored matches with zero additions and updates. Suppressed/deleted markers alone do not enable an override.
+
+The review table shows same-amount candidates within seven days, with signed amounts, payees, dates and day gaps. They are labelled candidates, not asserted exact matches: Actual's ignored-match response may omit the existing transaction ID.
+
+Select **Import as a separate transaction (keep the earlier purchase)** only if this is genuinely another purchase. It is unchecked by default. A second confirmation lists the selected purchases and warns that matching will be bypassed only for them. Earlier transactions are left unchanged.
+
+This option is unavailable for bank import IDs, existing same-day amount matches, absent candidates, uncertain skips and errors. The server rechecks candidates before writing and requires a successful separate-import dry run. A repeated attempt is blocked once a same-day match exists. Selections reset on a fresh preview.
+
+The per-row `forceAddTransaction` path was verified by reading the published API 26.9.0 code. It retains Actual's import rules and transfer processing. This is an internal capability: keep the pinned API version and retest before changing it. Tests simulate API responses, including the five-day Tim Hortons and seven-day Pizza 2001 cases; they do not replace a live-budget test.
 
 This approach is intentionally conservative. It is preferable to skip a questionable transaction for manual review than silently create a duplicate financial transaction.
 
@@ -441,7 +453,7 @@ Persistent profiles/settings survive container replacement because `/app/data` i
 For more controlled deployments, use a versioned image tag instead of `latest`, for example:
 
 ```text
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.3
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.4
 ```
 
 ## Updating the repository with the replacement ZIP
@@ -452,7 +464,7 @@ The release ZIP contains complete replacement files, not a command-line patch:
 2. Open the repository on GitHub and choose **Add file → Upload files**.
 3. Drag the extracted files and folders into the upload area. Include the `.github` folder so the Docker workflow receives the new version tag.
 4. Commit the upload to `main`.
-5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.3` tag. Include the new `import-reconciliation.js` file and updated Dockerfile in your upload.
+5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.4` tag. Include `import-reconciliation.js`, `tests`, and the updated Dockerfile in your upload.
 
 The upload replaces application files but does not touch the persistent `/app/data` volume, so saved settings and profiles remain intact.
 
@@ -466,7 +478,7 @@ Images are published to:
 
 ```text
 ghcr.io/covenn604/actual-budget-csv-importer:latest
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.3
+ghcr.io/covenn604/actual-budget-csv-importer:3.3.4
 ```
 
 ---
@@ -488,7 +500,15 @@ For security:
 
 # Current version
 
-**3.3.3**
+**3.3.4**
+
+## 3.3.4
+
+- Reads Actual preview details to distinguish ignored matches from uncertain skips
+- Shows same-amount candidate matches within seven days
+- Adds unchecked separate-purchase choices and an additional confirmation
+- Rechecks candidates and a bypass dry run before importing selected independent purchases
+- Retains deleted restores and ordinary duplicate protection; API stays at 26.9.0
 
 ## 3.3.3
 

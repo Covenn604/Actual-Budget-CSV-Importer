@@ -209,7 +209,8 @@ function renderResult(job,index){
   const actualRun=job.dryRun?.actual;
   const signTransform=safety?.signTransform;
   const restoreIndexes=job.restoreIndexes||[];
-  const eligible=(safety?.eligibleForSafeImport||0)+restoreIndexes.length;
+  const separateIndexes=job.separateIndexes||[];
+  const eligible=(safety?.eligibleForSafeImport||0)+restoreIndexes.length+separateIndexes.length;
 
   const safetyHtml=safety ? `
     <div class="safety-panel">
@@ -224,11 +225,12 @@ function renderResult(job,index){
 
       <div class="notice ${safety.counts.likelyDuplicate || safety.counts.possibleDuplicate ? "warn" : "good"}">
         ${safety.eligibleForSafeImport} new transaction(s) ready; ${restoreIndexes.length} deleted transaction(s) selected for reimport.
+        ${separateIndexes.length} matched transaction(s) selected as separate purchases.
         Definite, likely, and possible duplicates remain excluded.
       </div>
 
       ${safety.counts.previouslyDeleted ? `<div class="notice warn">${safety.counts.previouslyDeleted} previously deleted transaction(s) detected by comparing Actual dry runs. They remain skipped unless you select each one below.</div>` : ""}
-      ${safety.counts.actualSkipped || safety.counts.actualMatched || safety.counts.actualError ? `<div class="notice warn">Actual skipped or could not verify ${safety.counts.actualSkipped+safety.counts.actualMatched+safety.counts.actualError} transaction(s). Review the reasons below; these rows cannot be forced through.</div>` : ""}
+      ${safety.counts.actualSkipped || safety.counts.actualMatched || safety.counts.actualError ? `<div class="notice warn">Actual skipped or matched ${safety.counts.actualSkipped+safety.counts.actualMatched+safety.counts.actualError} transaction(s). Review the reasons and candidate matches. Only rows with a separate-purchase checkbox can bypass matching; uncertain skips and errors cannot.</div>` : ""}
 
       ${signTransform?.warning ? `
         <div class="notice bad"><strong>Amount-direction warning:</strong> ${esc(signTransform.warning)}</div>
@@ -254,7 +256,7 @@ function renderResult(job,index){
                 <th>Status</th>
                 <th>Sent to Actual</th>
                 <th>Converted source</th>
-                <th>Existing match</th>
+                <th>Existing match / candidates</th>
                 <th>Reason</th>
               </tr>
             </thead>
@@ -263,6 +265,7 @@ function renderResult(job,index){
                 <tr>
                   <td><span class="match ${row.classification}">${formatClassification(row.classification)}</span>
                     ${row.classification==="previouslyDeleted" ? `<label class="restore-choice"><input type="checkbox" ${restoreIndexes.includes(row.sourceIndex)?"checked":""} ${job.importing?"disabled":""} onchange="toggleRestore(${index},${row.sourceIndex},this.checked)"> Reimport this previously deleted transaction</label>` : ""}
+                    ${row.canImportSeparately ? `<label class="restore-choice"><input type="checkbox" ${separateIndexes.includes(row.sourceIndex)?"checked":""} ${job.importing?"disabled":""} onchange="toggleSeparate(${index},${row.sourceIndex},this.checked)"> Import as a separate transaction (keep the earlier purchase)</label>` : ""}
                   </td>
                   <td>
                     ${esc(row.incoming.date)} ·
@@ -273,7 +276,9 @@ function renderResult(job,index){
                   <td>
                     ${row.existing
                       ? `${esc(row.existing.date)} · ${Number(row.existing.amount).toFixed(2)} · ${esc(row.existing.payee||"(no payee)")}`
-                      : "—"
+                      : row.matchCandidates?.length
+                        ? `<small>Same-amount candidates within 7 days; Actual may not identify the exact match:</small>${row.matchCandidates.map(candidate=>`<div>${esc(candidate.date)} · ${Number(candidate.amount).toFixed(2)} · ${esc(candidate.payee)} (${candidate.daysApart} day(s) apart${candidate.reconciled?", reconciled/locked":""})</div>`).join("")}`
+                        : "—"
                     }
                   </td>
                   <td>${esc(row.reason)}</td>
@@ -285,7 +290,7 @@ function renderResult(job,index){
       </details>
 
       ${eligible > 0 && actualRun?.errors === 0
-        ? `<div class="actions"><button ${job.importing?"disabled":""} onclick="doImport(${index})">${signTransform?.warning ? "Import anyway" : "Confirm safe import"} (${eligible})</button></div>`
+        ? `<div class="actions"><button ${job.importing?"disabled":""} onclick="doImport(${index})">${separateIndexes.length ? "Confirm import with separate purchases" : signTransform?.warning ? "Import anyway" : "Confirm safe import"} (${eligible})</button></div>`
         : `<div class="notice">${actualRun?.errors ? "Resolve the failed Actual checks and run the preview again before importing." : "No transactions selected or currently ready for import."}</div>`
       }
     </div>
@@ -333,6 +338,7 @@ function renderResult(job,index){
         ${job.imported.skippedLikely} likely,
         ${job.imported.skippedPossible} possible;
         ${job.imported.skippedActual||0} skipped by Actual checks or left unrestored.
+        ${job.imported.addedSeparately||0} of the additions were explicitly imported as separate purchases.
       </div>
     `:""}
   `;
@@ -387,6 +393,7 @@ window.dryRun=async index=>{
   if(job.importing)return;
   job.dryRun=null;
   job.restoreIndexes=[];
+  job.separateIndexes=[];
 
   try{
     job.error=null;
@@ -407,6 +414,7 @@ window.dryRun=async index=>{
       actual:response.actual
     };
     job.restoreIndexes=[];
+    job.separateIndexes=[];
     job.status=`Ready · ${job.result.rows.length} source transactions`;
     job.error=null;
     renderJobs();
@@ -426,11 +434,21 @@ window.toggleRestore=(index,sourceIndex,checked)=>{
   renderJobs();
 };
 
+window.toggleSeparate=(index,sourceIndex,checked)=>{
+  const job=S.jobs[index];
+  if(job.importing)return;
+  const choices=new Set(job.separateIndexes||[]);
+  if(checked)choices.add(sourceIndex); else choices.delete(sourceIndex);
+  job.separateIndexes=[...choices];
+  renderJobs();
+};
+
 window.doImport=async index=>{
   const job=S.jobs[index];
   if(job.importing)return;
   const restoreIndexes=[...(job.restoreIndexes||[])];
-  const eligible=(job.dryRun?.safety?.eligibleForSafeImport || 0)+restoreIndexes.length;
+  const separateIndexes=[...(job.separateIndexes||[])];
+  const eligible=(job.dryRun?.safety?.eligibleForSafeImport || 0)+restoreIndexes.length+separateIndexes.length;
   const signWarning=job.dryRun?.safety?.signTransform?.warning;
 
   if(!eligible){
@@ -441,12 +459,18 @@ window.doImport=async index=>{
     (signWarning ? `Amount-direction warning: ${signWarning}\n\n` : "")+
     `Safe mode will import ${eligible} transaction(s). `+
     `${restoreIndexes.length} previously deleted transaction(s) selected for reimport. `+
+    `${separateIndexes.length} matched row(s) selected as separate purchases. `+
     `Transactions classified as definite, likely, or possible duplicates will be skipped. Continue?`
   )){
     return;
   }
 
   try{
+    if(separateIndexes.length){
+      const selectedRows=job.dryRun.safety.rows.filter(row=>separateIndexes.includes(row.sourceIndex));
+      const description=selectedRows.map(row=>`${row.incoming.date} · ${Number(row.incoming.amount).toFixed(2)} · ${row.incoming.description}`).join("\n");
+      if(!confirm(`Import these ${separateIndexes.length} rows as separate purchases?\n\n${description}\n\nActual considers them matches. This bypasses matching ONLY for these rows and leaves earlier transactions unchanged. Confirm only if these are genuinely different purchases.`))return;
+    }
     job.importing=true;
     renderJobs();
     const response=await api("/api/actual/import",{
@@ -456,6 +480,8 @@ window.doImport=async index=>{
         profileId:job.profile.id,
         rows:job.result.rows,
         restoreIndexes,
+        separateIndexes,
+        confirmSeparate:separateIndexes.length>0,
         confirm:true
       })
     });
@@ -463,6 +489,7 @@ window.doImport=async index=>{
     job.imported=response.summary;
     job.dryRun=null;
     job.restoreIndexes=[];
+    job.separateIndexes=[];
     job.error=null;
     job.status=response.summary.errors ? "Import finished with errors — review the counts" : "Safe import complete";
     renderJobs();

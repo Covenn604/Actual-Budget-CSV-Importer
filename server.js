@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as actual from "@actual-app/api";
-import { probeTransaction, importCandidate } from "./import-reconciliation.js";
+import { probeTransaction, importCandidate, getMatchCandidates, canImportSeparately, importSeparateCandidate } from "./import-reconciliation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageMetadata = JSON.parse(
@@ -1121,6 +1121,11 @@ async function reviewActualCandidates(api, accountId, rows, profile, analysis) {
     if (row.classification !== "new") continue;
     const transaction = toActualTransactions([rows[row.sourceIndex]], profile)[0];
     Object.assign(row, await probeTransaction(api, accountId, transaction));
+    if (row.classification === "actualMatched") {
+      row.matchCandidates = await getMatchCandidates(api, accountId, transaction);
+      row.canImportSeparately = canImportSeparately(transaction, row.matchCandidates);
+      if (!row.canImportSeparately) row.reason += " Separate import is unavailable for bank import IDs, same-day amount matches, or missing candidates.";
+    }
   }
   for (const classification of ["new", "previouslyDeleted", "actualSkipped", "actualMatched", "actualError"]) {
     analysis.counts[classification] = analysis.rows.filter(row => row.classification === classification).length;
@@ -1194,7 +1199,7 @@ app.post("/api/actual/dry-run", async (req, res, next) => {
 
 app.post("/api/actual/import", async (req, res, next) => {
   try {
-    const { profileId, rows, confirm, restoreIndexes = [] } = req.body || {};
+    const { profileId, rows, confirm, restoreIndexes = [], separateIndexes = [], confirmSeparate = false } = req.body || {};
 
     if (confirm !== true) {
       return res.status(400).json({
@@ -1213,6 +1218,12 @@ app.post("/api/actual/import", async (req, res, next) => {
       return res.status(400).json({ error: "Invalid deleted-transaction selection. Run the preview again." });
     }
     const selectedRestores = new Set(restoreIndexes);
+    if (!Array.isArray(separateIndexes) || separateIndexes.some(index =>
+      !Number.isInteger(index) || index < 0 || index >= rows.length || selectedRestores.has(index)) ||
+      (separateIndexes.length > 0 && confirmSeparate !== true)) {
+      return res.status(400).json({ error: "Invalid or unconfirmed separate-transaction selection. Run the preview again." });
+    }
+    const selectedSeparate = new Set(separateIndexes);
 
     const settings = await readSettings();
     const accountId =
@@ -1239,15 +1250,20 @@ app.post("/api/actual/import", async (req, res, next) => {
       await reviewActualCandidates(api, accountId, rows, profile, duplicateAnalysis);
       const importResult = { added: [], updated: [], errors: [] };
       let skippedActual = 0;
+      let addedSeparately = 0;
       for (const row of duplicateAnalysis.rows) {
         const selected = selectedRestores.has(row.sourceIndex);
-        if (row.classification !== "new" && !(row.classification === "previouslyDeleted" && selected)) {
+        const separate = selectedSeparate.has(row.sourceIndex) && row.classification === "actualMatched" && row.canImportSeparately;
+        if (row.classification !== "new" && !(row.classification === "previouslyDeleted" && selected) && !separate) {
           if (["previouslyDeleted", "actualSkipped", "actualMatched", "actualError"].includes(row.classification)) skippedActual++;
           continue;
         }
         const transaction = toActualTransactions([rows[row.sourceIndex]], profile)[0];
         try {
-          const outcome = await importCandidate(api, accountId, transaction, row.classification, selected);
+          const outcome = separate
+            ? await importSeparateCandidate(api, accountId, transaction)
+            : await importCandidate(api, accountId, transaction, row.classification, selected);
+          if (separate) addedSeparately += outcome.added?.length || 0;
           for (const field of ["added", "updated", "errors"]) {
             importResult[field].push(...(outcome[field] || []));
           }
@@ -1262,6 +1278,7 @@ app.post("/api/actual/import", async (req, res, next) => {
       return {
         importResult,
         skippedActual,
+        addedSeparately,
         duplicateAnalysis
       };
     });
@@ -1273,6 +1290,7 @@ app.post("/api/actual/import", async (req, res, next) => {
         updated: result.importResult.updated?.length || 0,
         errors: result.importResult.errors?.length || 0,
         skippedActual: result.skippedActual,
+        addedSeparately: result.addedSeparately,
         skippedDefinite:
           result.duplicateAnalysis.counts.definiteDuplicate,
         skippedLikely:
