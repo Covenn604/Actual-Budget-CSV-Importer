@@ -1,592 +1,269 @@
 # Actual Budget CSV Importer
 
-A self-hosted, profile-driven CSV converter and importer for [Actual Budget](https://actualbudget.org/).
+A self-hosted web app for converting bank and credit-card CSV statements into an Actual Budget-friendly format. Download a converted CSV or review and import transactions directly into Actual.
 
-The application is designed for banks and credit-card providers that export CSV files in different formats. Each user can create reusable mapping profiles in the browser, preview normalized transactions, download an Actual-compatible CSV, or optionally import directly into a self-hosted Actual Budget server.
+**Current version:** 3.3.4 · **Bundled Actual API:** 26.9.0
 
-## Features
+## Contents
 
-- Drag-and-drop one or more CSV statements
-- One output/import per source account — files are never merged together
-- Create reusable CSV profiles from unknown formats
-- Automatic recognition of previously configured profiles
-- Date, description, amount, debit, and credit field mapping
-- Separate downloadable-CSV and direct-Actual amount-sign rules
-- Optional stable imported-ID mapping
-- Persistent JSON profile storage
-- Import/export profile JSON for sharing
-- Direct connection to self-hosted Actual Budget
-- Actual compatibility display for importer, bundled API, and detected server versions
-- Automatic Actual budget discovery
-- Persistent selected-budget and profile-to-account mappings
-- Duplicate-safety preflight before direct imports
-- Actual `importTransactions` dry-run before confirmation
-- Explicit confirmation before a real import
+- [Install](#install)
+- [Set up CSV profiles](#set-up-csv-profiles)
+- [Connect to Actual](#connect-to-actual)
+- [Review and import transactions](#review-and-import-transactions)
+- [Update an existing installation](#update-an-existing-installation)
+- [Troubleshooting](#troubleshooting)
+- [Data storage and privacy](#data-storage-and-privacy)
+- [Changelog](#changelog)
 
-## How it works
+## Install
 
-```text
-CSV statement
-      |
-      v
-Detect saved profile
-      |
-      +-- unknown --> Configure profile --> Save JSON profile
-      |
-      v
-Normalize transactions
-      |
-      v
-Preview
-   /     \
-  v       v
-Download  Duplicate safety analysis
-CSV             |
-                v
-          Actual dry run
-                |
-                v
-          Confirm safe import
-```
+You need Docker with Docker Compose, or Portainer. An Actual Server is needed only for direct imports; CSV conversion works without it.
 
-## Requirements
+The default browser address is `http://YOUR-SERVER:8080`.
 
-For CSV conversion only:
+### Option 1: Portainer
 
-- Docker / Docker Compose, Portainer, or another container manager
-- A modern web browser
+1. Download this repository using **Code → Download ZIP** and extract it.
+2. Create a persistent data folder on your Docker host, such as `/opt/actual-budget-csv-importer/data` or `/mnt/tank/apps/actual-budget-csv-importer`.
+3. In Portainer, choose **Stacks → Add stack** and paste the contents of [docker-compose.yml](docker-compose.yml).
+4. Add the environment variables you need from the table below. Set `IMPORTER_DATA_PATH` to the host folder you created.
+5. Follow the certificate instructions below if needed, then deploy the stack.
+6. Open the importer in your browser.
 
-For direct Actual imports:
+### Option 2: Docker Compose
 
-- A self-hosted Actual Budget server reachable from the importer container
-- Actual server password
-- An Actual budget selected through the application's **Actual setup** screen
-- If Actual uses a self-signed/private certificate, the importer must trust that certificate
+Download and extract this repository. Copy [.env.example](.env.example) to `.env`, adjust the values, and review the certificate instructions below.
 
----
-
-# Installation
-
-## Option 1 — Docker Compose
-
-Create a directory for the application:
-
-```bash
-mkdir actual-budget-csv-importer
-cd actual-budget-csv-importer
-```
-
-Copy these files from the repository into it:
-
-```text
-docker-compose.yml
-.env.example
-```
-
-Create your environment file:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` for your system.
-
-A simple Linux example:
-
-```env
-IMPORTER_PORT=8080
-IMPORTER_DATA_PATH=/opt/actual-budget-csv-importer/data
-```
-
-A TrueNAS example might be:
-
-```env
-IMPORTER_PORT=8080
-IMPORTER_DATA_PATH=/mnt/tank/apps/actual-budget-csv-importer
-```
-
-Then deploy:
+From the extracted project folder:
 
 ```bash
 docker compose up -d
 ```
 
-Open:
+### Configuration
 
-```text
-http://YOUR-SERVER-IP:8080
-```
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `IMPORTER_IMAGE` | `ghcr.io/covenn604/actual-budget-csv-importer:latest` | Container image; use `:3.3.4` to pin this version. |
+| `IMPORTER_CONTAINER_NAME` | `actual-budget-csv-importer` | Container name. |
+| `IMPORTER_PORT` | `8080` | Browser access port on the host. |
+| `IMPORTER_DATA_PATH` | `./data` | Host folder for saved settings and profiles. Use an absolute host path in Portainer. |
+| `ACTUAL_CACHE_IDLE_MINUTES` | `20` | Minutes of Actual API inactivity before temporary budget-cache cleanup; minimum 1. |
+| `ACTUAL_CA_CERT_PATH` | `./certs/actual-server.crt` | Host path to a trusted custom CA/server certificate, if required. |
+| `NODE_EXTRA_CA_CERTS` | `/certs/actual-server.crt` | Certificate path inside the importer container. |
 
-## Option 2 — Portainer Stack
+### HTTPS and custom certificates
 
-In Portainer:
+If your Actual Server uses a private or self-signed certificate:
 
-1. Open **Stacks**.
-2. Select **Add stack**.
-3. Choose **Web editor** or **Git repository**.
-4. Use the repository's `docker-compose.yml`.
-5. Add stack environment variables matching the values described below.
-6. Deploy the stack.
+1. Put the trusted certificate on the Docker host.
+2. Set `ACTUAL_CA_CERT_PATH` to that file's host path.
+3. Keep the certificate volume mount and `NODE_EXTRA_CA_CERTS` entry in the Compose file.
+4. Use an Actual Server URL whose hostname matches the certificate.
 
-Recommended Portainer environment variables:
+**If you do not need a custom certificate**, remove both the certificate volume mount and the `NODE_EXTRA_CA_CERTS` entry from [docker-compose.yml](docker-compose.yml) or your Portainer stack. The supplied configuration includes them by default.
 
-```text
-IMPORTER_PORT=8080
-IMPORTER_DATA_PATH=/path/on/your/docker/host/actual-budget-csv-importer
-```
+Do not disable TLS verification to work around certificate errors.
 
-If Actual uses a private/self-signed HTTPS certificate:
+## Set up CSV profiles
 
-```text
-ACTUAL_CA_CERT_PATH=/path/on/your/docker/host/server.crt
-NODE_EXTRA_CA_CERTS=/certs/actual-server.crt
-```
+No institution-specific profiles are bundled. Create a profile for each statement format you use:
 
-The importer stores persistent application data under `/app/data` inside the container.
+1. Upload a sample statement.
+2. Map its date and description/payee columns.
+3. Map either a single amount column or separate debit and credit columns.
+4. If available, map a stable transaction reference to **Imported ID**.
+5. Check the date format, amount signs, and preview, then save the profile.
 
----
+Profiles can be exported, imported, and deleted. Use the preview to verify a profile before importing a full statement.
 
-# Docker Compose configuration
+### Amount signs: payments versus deposits
 
-The supplied compose file is intentionally host-agnostic:
+Actual uses **negative amounts for payments/outflows** and **positive amounts for deposits/inflows**.
 
-```yaml
-services:
-  actual-budget-csv-importer:
-    image: ${IMPORTER_IMAGE:-ghcr.io/covenn604/actual-budget-csv-importer:latest}
-    container_name: ${IMPORTER_CONTAINER_NAME:-actual-budget-csv-importer}
+There are two stages: CSV conversion first, then the direct-import sign setting. The safe-import review shows the final signed amount that will be sent to Actual alongside the converted source amount.
 
-    ports:
-      - "${IMPORTER_PORT:-8080}:3000"
+For a credit-card statement where purchases are positive and payments received are negative, preserve those source signs during conversion and use **Invert amount** for direct import. For example:
 
-    volumes:
-      - ${IMPORTER_DATA_PATH:-./data}:/app/data
-      - ${ACTUAL_CA_CERT_PATH:-./certs/actual-server.crt}:/certs/actual-server.crt:ro
+- A purchase of `2.32` becomes `-2.32`: a payment in Actual.
+- A payment received of `-4982.88` becomes `4982.88`: a deposit in Actual.
 
-    environment:
-      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-/certs/actual-server.crt}
+**Force negative** makes every transaction a payment. **Force positive** makes every transaction a deposit. Neither is suitable for a statement that needs both directions. Mixed-sign statements using either setting trigger an additional warning and an **Import anyway** confirmation.
 
-    restart: unless-stopped
-```
+## Connect to Actual
 
-Nothing in the compose file is tied to a particular TrueNAS pool or host path.
+Skip this section if you only want to download converted CSV files.
 
-## Persistent data
+1. Open **Actual setup**.
+2. Enter your Actual Server URL and password. Add the budget encryption password if your budget requires one.
+3. Save the connection settings.
+4. Discover budgets, select the correct budget, and use it.
+5. Test the budget connection.
+6. Map each CSV profile to its destination Actual account.
 
-The host path configured by `IMPORTER_DATA_PATH` contains:
+The compatibility display shows the importer version, bundled Actual API version, and detected Actual Server version using `getServerVersion()`.
 
-```text
-profiles/
-  my-bank.json
-  my-credit-card.json
+**The bundled API and Actual Server versions should match.** Version differences can cause migration errors or **“No budget file is open”**. Resolve a mismatch before importing; see [Troubleshooting](#troubleshooting).
 
-settings.json
-```
+Your saved budget selection persists across reloads and remains visible if budget discovery temporarily fails.
 
-`profiles/*.json` contains portable CSV mapping rules.
+## Review and import transactions
 
-`settings.json` contains private local configuration such as:
+Upload a statement, select its profile and destination account, and review the safe-import preview before confirming.
 
-- Actual server URL
-- Actual server password
-- selected budget
-- profile-to-Actual-account mappings
+The importer checks its own duplicate rules and Actual's import preview. A transaction being absent from the visible account does **not** automatically mean Actual will accept it as new.
 
-Do not commit the persistent data directory to Git.
+### What the review statuses mean
 
----
+| Status | Meaning and next step |
+| --- | --- |
+| New | No blocking match was found by the checks. Review the amount and account before importing. |
+| Definite duplicate | The imported ID matches an existing transaction. Skipped by default. |
+| Likely duplicate | Same date, amount, and normalized payee as an existing transaction. Skipped by default. |
+| Possible match | Same amount and a similar payee within three days. Review carefully; skipped by default. |
+| Previously deleted | Comparing Actual previews indicates a recoverable deleted import. Restore only if you intentionally want it back. |
+| Matched by Actual | Actual matched or ignored the row under its own reconciliation rules. Review the displayed evidence and candidates. |
+| Skipped by Actual — reason unconfirmed | Actual did not accept the row, but the checks could not establish a safe reason or recovery route. No override is offered for an unexplained skip. |
+| Actual check failed — skipped | The preview check failed. Resolve the error before proceeding. |
 
-# HTTPS and self-signed certificates
+### Previously deleted transactions
 
-If your Actual server uses a certificate signed by a public CA, no special trust configuration may be necessary.
+Actual can remember an imported transaction after you delete it. Importing the same statement again may therefore skip that transaction.
 
-If Actual uses a self-signed/private certificate, set:
+The importer compares dry runs with and without deleted-import recovery. When that comparison identifies a recoverable deleted import, an **unchecked, per-row restore choice** is offered. Only selected rows are restored, and each is checked again before writing.
 
-```env
-ACTUAL_CA_CERT_PATH=/host/path/to/server.crt
-NODE_EXTRA_CA_CERTS=/certs/actual-server.crt
-```
+An uncertain skip is not labelled as deleted merely because you previously deleted transactions.
 
-The certificate should be valid for the hostname or IP address used in the Actual server URL.
+### Separate purchases with the same amount
 
-For example, if the importer connects to:
+Actual can reconcile transactions with the same amount within seven days, even when they are separate purchases. The review shows nearby same-amount candidates to help you decide.
 
-```text
-https://192.168.1.10:5006
-```
+**Candidates are possibilities, not proof of the exact transaction Actual matched.**
 
-the certificate should include:
+For eligible rows, you can explicitly choose to import the incoming transaction as a separate purchase. This choice:
 
-```text
-subjectAltName = IP:192.168.1.10
-```
+- Starts unchecked and requires an additional confirmation.
+- Is not offered when the incoming row has an imported ID or a same-day, same-amount candidate.
+- Rechecks the candidates and runs another preview before adding the transaction.
+- Leaves the earlier transaction unchanged.
 
-Do not solve certificate problems by globally disabling TLS verification.
+Use this only when you have confirmed that the purchases really are separate. It is not a blanket duplicate override.
 
----
+### Imported IDs
 
-# First-run CSV profile setup
+If your bank supplies a stable, unique transaction ID, reference, or FITID, map it to **Imported ID**. This provides stronger duplicate detection across repeated imports than date, amount, and payee alone.
 
-A fresh installation intentionally contains no institution-specific profiles.
+Do not use a value shared by multiple transactions as their imported ID.
 
-Upload a CSV.
+## Update an existing installation
 
-If the format is unknown, click **Configure profile**.
+**Updating files on GitHub does not update a running container.** Pull and redeploy the container image separately.
 
-Configure:
+Back up your persistent data folder before updating, and keep its volume mapping unchanged.
 
-- Profile name
-- Date format
-- Date column
-- Description/payee column
-- Amount layout
-  - single amount column, or
-  - separate debit/credit columns
-- CSV conversion sign
-- Direct Actual import sign
-- Optional imported-ID column
+### Portainer
 
-Test the mapping and save it.
+1. Open the existing stack and check its image tag.
+2. Use `latest` for the current build, or `3.3.4` to pin this version.
+3. Update/redeploy the stack with the option to pull the image again enabled.
+4. Refresh the browser and check the importer version in **Actual setup**.
+5. Check API/server compatibility and test the budget connection before importing.
 
-The profile is written to:
+### Docker Compose
 
-```text
-/app/data/profiles/<profile-name>.json
-```
-
-Future CSVs containing the profile's required headers are recognized automatically.
-
-## Amount signs
-
-The application intentionally separates two concepts.
-
-### CSV conversion sign
-
-Controls the amount written to the downloadable CSV.
-
-### Direct Actual import sign
-
-Controls the amount sent through the Actual API and used for duplicate analysis.
-
-This is useful for credit cards where a source CSV may contain:
-
-```text
-60.00
-```
-
-but Actual internally stores the purchase as:
-
-```text
--60.00
-```
-
-Choose **Invert amount** for the direct Actual import rule in that case.
-
----
-
-# Connecting to Actual Budget
-
-Open **Actual setup**.
-
-At the top of the page, **Actual compatibility** shows:
-
-- importer version
-- bundled `@actual-app/api` version
-- Actual Server version detected with `getServerVersion()`
-
-The bundled API and server should use the same version. A red warning appears when they differ because version mismatches can cause database migration errors or an unexpected `No budget file is open` error. If the server version cannot be detected, save the connection details, verify that the importer container can reach the server, and click **Check versions**.
-
-## 1. Connect to Actual Server
-
-Enter:
-
-- Actual server URL
-- server password
-- encryption password only if the budget uses Actual E2E encryption
-
-Click **Save connection**.
-
-The password is saved only in the server-side persistent settings file and is never returned to the browser.
-
-## 2. Select a budget
-
-Click **Discover budgets** on first setup.
-
-The importer calls Actual's `getBudgets()` and displays budgets by name. Duplicate local/remote entries are deduplicated by Sync ID.
-
-Select a budget and click **Use selected budget**.
-
-The selected budget is persisted. On future page loads, the saved budget appears immediately in the dropdown; the application also refreshes budget discovery automatically when the Actual setup page is opened.
-
-You do not need to manually enter a Sync ID.
-
-## 3. Map profiles to Actual accounts
-
-Once a budget has been selected, the importer loads its accounts.
-
-Example:
-
-```text
-Bank CSV profile        -> Chequing
-Mastercard CSV profile  -> Credit Card
-```
-
-These mappings remain local and are not included in exported profile JSON.
-
----
-
-# Troubleshooting Actual setup
-
-## API and server versions differ
-
-Update the older component so **Bundled Actual API** and **Detected Actual Server** show the same version. This release intentionally pins the importer to `@actual-app/api` `26.9.0`, so it is intended to connect to Actual Server `26.9.0`. After updating, restart/redeploy the importer and click **Check versions**.
-
-## `No budget file is open`
-
-Confirm that the intended budget is selected, then check the compatibility display before testing the budget again. This message can appear when a version mismatch prevents Actual's local working copy from opening or finishing its migrations. If the versions already match, use **Discover budgets** to refresh the list and select the budget again.
-
-## Migration error
-
-Do not repeatedly retry imports. First make the API and server versions match, redeploy the importer to clear its temporary working copy, and test the selected budget again. Your source CSVs, profiles, and persistent settings are not stored in that temporary copy.
-
-## Server version cannot be detected
-
-- Verify the URL and password, then click **Save connection**.
-- Confirm that the Actual Server is reachable from inside the importer container.
-- For a private/self-signed certificate, configure `ACTUAL_CA_CERT_PATH` and `NODE_EXTRA_CA_CERTS` as described above.
-- Click **Check versions** again after correcting the connection.
-
----
-
-# Duplicate safety
-
-Direct imports do not rely only on Actual's reconciliation result.
-
-Before importing, the application fetches existing transactions from the mapped account and classifies incoming rows.
-
-## Definite duplicate
-
-Same `imported_id` already exists.
-
-## Likely duplicate
-
-Same:
-
-- date
-- amount
-- normalized payee
-
-## Possible match
-
-Same amount and a similar payee within three days.
-
-## New
-
-No matching existing transaction was found.
-
-Safe mode sends transactions classified as **New — ready to import**, plus only the previously deleted rows you select to restore or Actual matches you explicitly confirm as separate purchases.
-
-Definite, likely, and possible duplicates are skipped.
-
-The duplicate analysis is run again on the server immediately before the confirmed import so the browser cannot submit a stale safety result.
-
-Actual's own `importTransactions` reconciliation then runs on the safe subset.
-
-## Previously deleted transactions (v3.3.3)
-
-For each candidate that passes our duplicate checks, the importer runs Actual's non-writing dry run with deleted reimports disabled. If that skips the row, it compares another dry run with deleted reimports enabled.
-
-- **New — ready to import:** Actual would add the row normally.
-- **Previously deleted — skipped unless selected:** only the restore-enabled dry run would add the row. An unchecked **Reimport this previously deleted transaction** choice appears next to it.
-- **Skipped by Actual — reason unconfirmed:** the comparison does not establish a deleted import; no restore override is offered.
-- **Matched by Actual — skipped:** Actual would reconcile with an existing transaction rather than add one.
-- **Actual check failed — skipped:** an error or unexpected result prevented verification.
-
-Review the date, signed amount, and description, select only the deleted transactions you intend to bring back, and confirm. Choices reset whenever you rerun the preview. The server repeats the checks before importing; `reimportDeleted` is enabled only for each selected, freshly verified deleted row. Normal duplicate checks remain enabled. Imports are processed one row at a time and rechecked, so totals may decrease if another row has already satisfied a match. Previewing large statements can take longer because of these extra checks.
-
-Detection is inferred from Actual's paired dry-run behavior, not a direct deleted flag. A normal skip alone is never labelled previously deleted. The test suite uses simulated API responses; live compatibility with your Actual 26.9.0 budget should be checked on a backed-up test budget before a large import.
-
-## Separate repeat purchases (v3.3.4)
-
-Actual may match an existing same-amount purchase up to seven days away. Two genuine visits to the same merchant can therefore be treated as one purchase. Version 3.3.4 reads Actual's `updatedPreview` markers, including ignored matches with zero additions and updates. Suppressed/deleted markers alone do not enable an override.
-
-The review table shows same-amount candidates within seven days, with signed amounts, payees, dates and day gaps. They are labelled candidates, not asserted exact matches: Actual's ignored-match response may omit the existing transaction ID.
-
-Select **Import as a separate transaction (keep the earlier purchase)** only if this is genuinely another purchase. It is unchecked by default. A second confirmation lists the selected purchases and warns that matching will be bypassed only for them. Earlier transactions are left unchanged.
-
-This option is unavailable for bank import IDs, existing same-day amount matches, absent candidates, uncertain skips and errors. The server rechecks candidates before writing and requires a successful separate-import dry run. A repeated attempt is blocked once a same-day match exists. Selections reset on a fresh preview.
-
-The per-row `forceAddTransaction` path was verified by reading the published API 26.9.0 code. It retains Actual's import rules and transfer processing. This is an internal capability: keep the pinned API version and retest before changing it. Tests simulate API responses, including the five-day Tim Hortons and seven-day Pizza 2001 cases; they do not replace a live-budget test.
-
-This approach is intentionally conservative. It is preferable to skip a questionable transaction for manual review than silently create a duplicate financial transaction.
-
----
-
-# Imported IDs
-
-If your bank provides a stable transaction identifier such as:
-
-- transaction ID
-- reference number
-- FITID
-- unique ID
-
-map it to **Imported ID**.
-
-Actual provides its strongest duplicate protection when the same `imported_id` is supplied on subsequent imports.
-
----
-
-# Updating
-
-If using the `latest` image:
+From your existing project folder:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-In Portainer, use **Pull latest image and redeploy**.
+Refresh the browser, confirm the importer version, and test the Actual connection.
 
-Persistent profiles/settings survive container replacement because `/app/data` is mounted from the host.
+### Upgrading from 3.2.x
 
-For more controlled deployments, use a versioned image tag instead of `latest`, for example:
+Version 3.3 moved the Actual working cache out of persistent storage. After confirming the upgrade works, you may remove the old `actual-cache` folder from your importer's persistent host-data directory.
 
-```text
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.4
-```
+Do **not** delete `settings.json` or `profiles/`; they hold your saved configuration.
 
-## Updating the repository with the replacement ZIP
+### Publishing replacement files to GitHub
 
-The release ZIP contains complete replacement files, not a command-line patch:
+When applying a complete replacement ZIP, extract it and upload the files into the repository root, not an extra enclosing folder. Include the `.github` directory, `tests`, and helper files such as `import-reconciliation.js`.
 
-1. Extract the ZIP on your computer.
-2. Open the repository on GitHub and choose **Add file → Upload files**.
-3. Drag the extracted files and folders into the upload area. Include the `.github` folder so the Docker workflow receives the new version tag.
-4. Commit the upload to `main`.
-5. Wait for **Build and Publish Docker Image** to finish, then pull/redeploy `latest` or set `IMPORTER_IMAGE` to the `3.3.4` tag. Include `import-reconciliation.js`, `tests`, and the updated Dockerfile in your upload.
+The GitHub workflow runs regression tests before publishing the container to GHCR with `latest`, `3.3.4`, and commit-specific tags. Wait for the build to succeed, then pull/redeploy your installation as described above.
 
-The upload replaces application files but does not touch the persistent `/app/data` volume, so saved settings and profiles remain intact.
+## Troubleshooting
 
----
+| Problem | What to check |
+| --- | --- |
+| API/server version warning | Compare the versions in Actual setup. Use an importer build whose bundled API matches your server, or update the server to the matching version. Back up before changing versions. |
+| “No budget file is open” | Check compatibility first, rediscover/select the budget, and test the connection. Also verify any budget encryption password. |
+| Migration error | Stop repeated import attempts. Check API/server compatibility, align the versions, then recreate the importer container to discard its temporary working cache and test again. Do not delete the server budget or persistent importer settings. |
+| Server unreachable or authentication failed | Check the URL, password, and network access from the importer container. The browser being able to reach Actual does not prove the container can. |
+| Certificate error | Check the trusted certificate mount and the URL hostname against the certificate. Do not disable certificate verification. |
+| Payment received imported as a payment | Check the final signed amount in the review. Mixed-sign credit-card statements commonly need **Invert amount**, not **Force negative**. |
+| Transaction skipped after deleting it in Actual | Review the deleted-import status and restore choice. Not all skips are caused by deletion. |
+| Separate purchase skipped | Review Actual's nearby same-amount candidates. Use the separate-purchase choice only if available and you have confirmed they are distinct transactions. |
+| Old importer version after an update | Confirm the image tag, pull the image again, redeploy the container, and refresh the browser. A GitHub file update alone is not enough. |
 
-# GitHub / GHCR
+## Data storage and privacy
 
-The included GitHub Actions workflow builds the Docker image when changes are pushed to `main`.
+Uploaded CSV files are processed in memory. Saved configuration and Actual's temporary working budget have different storage locations:
 
-Images are published to:
+| Location inside the container | Contents | Lifetime |
+| --- | --- | --- |
+| `/app/data/profiles/` | Saved CSV profiles | Persistent host volume |
+| `/app/data/settings.json` | Connection settings, passwords, selected budget, and account mappings | Persistent host volume |
+| `/tmp/actual-budget-csv-importer` | Actual API working copy of the budget; may contain financial data | Temporary container storage |
 
-```text
-ghcr.io/covenn604/actual-budget-csv-importer:latest
-ghcr.io/covenn604/actual-budget-csv-importer:3.3.4
-```
+Saved passwords are not returned to the browser, but they are stored in the settings file. Protect the persistent folder and its backups, and restrict access to the importer.
 
----
+The temporary budget cache is deleted after `ACTUAL_CACHE_IDLE_MINUTES` of Actual API inactivity (default **20 minutes**, minimum **1 minute**). Actual-related activity resets the timer. Recreating the container also discards this cache.
 
-# Privacy
+### Testing and API upgrades
 
-Uploaded bank/credit-card CSV files are processed in memory and are not intentionally persisted by the application.
+The repository includes mocked-API regression tests for reconciliation, deleted-import recovery, and separate-purchase safeguards. These do not replace testing against your own Actual installation.
 
-Persistent storage contains configuration, mappings, and the Actual API local cache.
+The separate-purchase path relies on behavior in the pinned `@actual-app/api` version, including its internal `forceAddTransaction` flag. Re-test that path before changing the API dependency.
 
-For security:
+## Changelog
 
-- keep the application LAN-only unless you add authentication/reverse-proxy protection
-- use HTTPS when exposing it beyond a trusted network
-- do not publish your persistent data directory
-- do not put bank statements into the Git repository
+Newest releases appear first. The application remains on **3.3.4**; documentation-only edits do not change its version.
 
----
+### 3.3.4 — Separate-purchase review
 
-# Current version
+- Distinguishes Actual matches from uncertain skips using Actual preview details.
+- Shows same-amount candidate transactions within seven days.
+- Adds explicit, unchecked separate-purchase choices with additional confirmation and pre-import revalidation.
+- Retains deleted-import recovery and duplicate safeguards; API remains 26.9.0.
 
-**3.3.4**
+### 3.3.3 — Deleted-import recovery
 
-## 3.3.4
+- Compares Actual dry runs to identify recoverable previously deleted imports.
+- Adds unchecked, per-row restore choices and revalidates selected rows before importing.
+- Separates uncertain skips, Actual matches, and check errors from new transactions.
+- Adds mocked-API regression tests; API remains pinned to 26.9.0.
 
-- Reads Actual preview details to distinguish ignored matches from uncertain skips
-- Shows same-amount candidate matches within seven days
-- Adds unchecked separate-purchase choices and an additional confirmation
-- Rechecks candidates and a bypass dry run before importing selected independent purchases
-- Retains deleted restores and ordinary duplicate protection; API stays at 26.9.0
+### 3.3.2 — Clearer payment and deposit signs
 
-## 3.3.3
+- Shows the exact signed amount sent to Actual beside the converted source amount.
+- Warns when a force-sign setting turns a mixed-sign statement into payments only or deposits only.
+- Repeats the warning at final confirmation and clarifies when to use **Invert amount**.
 
-- Compares Actual dry runs to identify recoverable previously deleted imports
-- Adds explicit, unchecked per-row reimport choices and confirmation counts
-- Distinguishes uncertain skips, Actual matches, and check errors from new rows
-- Revalidates each candidate before writing; restore is never enabled for the whole statement
-- Includes automated mocked-API regression tests; API remains pinned to `26.9.0`
+### 3.3.1 — Actual version compatibility
 
-## 3.3.2
+- Displays importer, bundled API, and detected Actual Server versions.
+- Warns about mismatches and improves migration, budget-open, network, and certificate guidance.
+- Pins the Actual API to 26.9.0 and updates Docker publishing version tags.
 
-- Changed duplicate/safe-import review to show the exact signed amount sent to Actual
-- Added the converted source amount beside the final Actual amount for comparison
-- Added a prominent warning when Force negative/positive collapses a mixed-sign statement into one direction
-- Repeats the amount-direction warning in the final confirmation and labels the action **Import anyway**
-- Clarified that Force negative creates payments only and Force positive creates deposits only
-- Documented that mixed-sign credit-card statements commonly require **Invert amount**
+### 3.3.0 — Temporary budget cache
 
-## 3.3.1
+- Moves Actual's working copy from persistent storage to container temporary storage.
+- Adds configurable idle cleanup through `ACTUAL_CACHE_IDLE_MINUTES`, defaulting to 20 minutes.
+- Discards the temporary working copy when the container is recreated.
 
-- Added an Actual setup compatibility display for importer, bundled API, and detected server versions
-- Detects the server version through Actual's `getServerVersion()` API
-- Clearly warns when the bundled Actual API and server versions differ
-- Improved migration, `No budget file is open`, network, and certificate error guidance
-- Pinned `@actual-app/api` to `26.9.0`
-- Updated Docker image workflow tagging to `3.3.1`
+### 3.2.2 — Easier deployment and saved-budget setup
 
-## 3.2.2
-
-- generalized Docker Compose paths using environment variables
-- added `.env.example`
-- comprehensive installation/Portainer documentation
-- persisted budget now appears immediately after page reload
-- Actual setup automatically refreshes discovered budgets when opened
-- saved budget remains visible if discovery temporarily fails
-
-
-# Temporary Actual API cache
-
-Actual's API uses a local working copy of the selected budget. Because that working copy can contain financial data, version 3.3 no longer stores it in the persistent `/app/data` volume.
-
-The working copy now lives at:
-
-```text
-/tmp/actual-budget-csv-importer
-```
-
-Only configuration remains persistent:
-
-```text
-/app/data/profiles/
-/app/data/settings.json
-```
-
-## Configurable idle cleanup
-
-Set the cache inactivity timeout with:
-
-```env
-ACTUAL_CACHE_IDLE_MINUTES=20
-```
-
-The default is 20 minutes and the minimum is 1 minute. For a short personal import workflow, for example:
-
-```env
-ACTUAL_CACHE_IDLE_MINUTES=5
-```
-
-Actual-related activity resets the inactivity timer. After the configured idle period, the temporary Actual working directory is deleted. Because it is also outside the persistent Docker volume, recreating the container discards it as well.
-
-## Upgrading from 3.2.x
-
-Previous versions used `/app/data/actual-cache`. Version 3.3 no longer uses that directory. After upgrading and confirming the new version works, you may remove the old `actual-cache` directory from the importer's persistent host-data directory.
-
-## 3.3.0
-
-- Moved Actual's working copy from persistent storage to container `/tmp`
-- Added `ACTUAL_CACHE_IDLE_MINUTES`
-- Automatic cleanup after Actual API inactivity
-- Default timeout: 20 minutes
-- Container recreation also discards the working copy
+- Adds environment-based Compose paths, `.env.example`, and installation/Portainer guidance.
+- Shows the saved budget immediately after reload and refreshes budget discovery when setup opens.
+- Keeps the saved budget visible when discovery temporarily fails.
